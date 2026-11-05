@@ -1,0 +1,20 @@
+/* 毛玻璃表面：品牌延续自 web，但桌面端的密度与分隔更克制。 */
+
+.glass {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+}
+
+.glass-strong {
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  backdrop-filter: blur(calc(var(--glass-blur) + 6px)) saturate(150%);
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) + 6px)) saturate(150%);
+  box-shadow: var(--shadow-lg);
+}
+
+.hairline {
+  border-bottom: 1px solid var(--border);
+}

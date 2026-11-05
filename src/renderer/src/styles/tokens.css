@@ -1,0 +1,43 @@
+:root {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+
+  /* 顶部带子留足呼吸：品牌行与右侧顶栏共用这个高度。 */
+  --titlebar-h: 72px;
+  --player-h: 90px;
+  --sidebar-w: 232px;
+
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 56px;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 320ms;
+
+  --z-bg: 0;
+  --z-content: 1;
+  --z-chrome: 20;
+  --z-overlay: 100;
+  --z-toast: 200;
+
+  --shadow-sm: 0 2px 8px var(--shadow-color);
+  --shadow-md: 0 12px 32px var(--shadow-color);
+  --shadow-lg: 0 28px 70px var(--shadow-color);
+}

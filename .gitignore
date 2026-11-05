@@ -1,0 +1,12 @@
+node_modules/
+out/
+dist/
+release/
+*.log
+*.local
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+smoke*.png
+mock.log
