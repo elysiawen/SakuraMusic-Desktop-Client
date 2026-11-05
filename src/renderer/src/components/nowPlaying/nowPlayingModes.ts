@@ -25,7 +25,7 @@ export const NOW_PLAYING_MODES: NowPlayingModeDef[] = [
   {
     id: 'classic',
     name: '经典',
-    icon: 'list',
+    icon: 'disc',
     hint: '封面与歌词左右分栏',
     component: ClassicMode,
   },

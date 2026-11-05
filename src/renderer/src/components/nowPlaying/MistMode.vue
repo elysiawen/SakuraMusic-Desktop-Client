@@ -437,97 +437,106 @@ onBeforeUnmount(() => {
             </template>
           </p>
           <span class="meta-tags">
-            <span v-if="sourceText" class="tag">{{ sourceText }}</span>
-            <QualityPicker placement="down" align="left" />
-            <span v-if="player.usingDirect" class="tag direct">直连</span>
+            <span class="meta-tags-inner">
+              <span v-if="sourceText" class="tag">{{ sourceText }}</span>
+              <QualityPicker placement="down" align="right" />
+              <span v-if="player.usingDirect" class="tag direct">直连</span>
+            </span>
           </span>
         </div>
 
-        <div class="progress-row">
-          <span class="time">{{ formatTime(shownTime) }}</span>
-          <input
-            class="range"
-            type="range"
-            min="0"
-            :max="duration || 0"
-            step="0.1"
-            :value="shownTime"
-            :style="{ '--fill': `${progressPercent}%` }"
-            :disabled="duration <= 0"
-            aria-label="播放进度"
-            @input="onSeekInput"
-            @change="onSeekDone"
-            @pointerup="onSeekDone"
-          />
-          <span class="time">{{ formatTime(duration) }}</span>
-        </div>
-
-        <div class="transport">
-          <button
-            type="button"
-            class="btn-icon transport-side"
-            :class="{ 'is-active': currentMode !== 'order' }"
-            :title="currentMode"
-            @click="cycleMode"
-          >
-            <AppIcon :name="modeIcon" :size="18" />
-          </button>
-
-          <button type="button" class="btn-icon transport-skip" title="上一首" @click="prev">
-            <AppIcon name="prev" :size="21" filled />
-          </button>
-
-          <button type="button" class="play-btn" :title="shownPlaying ? '暂停（空格）' : '播放（空格）'" @click="toggle">
-            <AppIcon v-if="player.loading" name="refresh" :size="19" class="spin" />
-            <AppIcon v-else-if="shownPlaying" name="pause" :size="19" filled />
-            <AppIcon v-else name="play" :size="19" filled />
-          </button>
-
-          <button type="button" class="btn-icon transport-skip" title="下一首" @click="next">
-            <AppIcon name="next" :size="21" filled />
-          </button>
-
-          <div class="volume">
-            <button
-              type="button"
-              class="btn-icon transport-side"
-              :class="{ 'is-active': player.muted || player.volume === 0 }"
-              :title="player.muted ? '取消静音' : '静音'"
-              @click="player.toggleMute()"
-            >
-              <AppIcon :name="player.muted || player.volume === 0 ? 'mute' : 'volume'" :size="19" />
-            </button>
-            <div class="volume-pop">
+        <!-- 悬停展开区：进度与按键收在这里，鼠标移上浮块才展开 -->
+        <div class="chip-expand">
+          <div class="chip-expand-inner">
+            <div class="progress-row">
+              <span class="time">{{ formatTime(shownTime) }}</span>
               <input
-                class="range volume-range"
+                class="range"
                 type="range"
                 min="0"
-                max="100"
-                step="1"
-                :value="volumePercent"
-                :style="{ '--fill': `${volumePercent}%` }"
-                aria-label="音量"
-                @input="onVolumeInput"
+                :max="duration || 0"
+                step="0.1"
+                :value="shownTime"
+                :style="{ '--fill': `${progressPercent}%` }"
+                :disabled="duration <= 0"
+                aria-label="播放进度"
+                @input="onSeekInput"
+                @change="onSeekDone"
+                @pointerup="onSeekDone"
               />
-              <span class="volume-value">{{ volumePercent }}</span>
+              <span class="time">{{ formatTime(duration) }}</span>
+            </div>
+
+            <div class="transport">
+              <button
+                type="button"
+                class="btn-icon transport-side"
+                :class="{ 'is-active': currentMode !== 'order' }"
+                :title="currentMode"
+                @click="cycleMode"
+              >
+                <AppIcon :name="modeIcon" :size="18" />
+              </button>
+
+              <button type="button" class="btn-icon transport-skip" title="上一首" @click="prev">
+                <AppIcon name="prev" :size="21" filled />
+              </button>
+
+              <button type="button" class="play-btn" :title="shownPlaying ? '暂停（空格）' : '播放（空格）'" @click="toggle">
+                <AppIcon v-if="player.loading" name="refresh" :size="19" class="spin" />
+                <AppIcon v-else-if="shownPlaying" name="pause" :size="19" filled />
+                <AppIcon v-else name="play" :size="19" filled />
+              </button>
+
+              <button type="button" class="btn-icon transport-skip" title="下一首" @click="next">
+                <AppIcon name="next" :size="21" filled />
+              </button>
+
+              <div class="volume">
+                <button
+                  type="button"
+                  class="btn-icon transport-side"
+                  :class="{ 'is-active': player.muted || player.volume === 0 }"
+                  :title="player.muted ? '取消静音' : '静音'"
+                  @click="player.toggleMute()"
+                >
+                  <AppIcon :name="player.muted || player.volume === 0 ? 'mute' : 'volume'" :size="19" />
+                </button>
+                <div class="volume-pop">
+                  <div class="volume-pop-inner">
+                    <input
+                      class="range volume-range"
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      :value="volumePercent"
+                      :style="{ '--fill': `${volumePercent}%` }"
+                      aria-label="音量"
+                      @input="onVolumeInput"
+                    />
+                    <span class="volume-value">{{ volumePercent }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="ui.lyricHints" class="mist-hints">
+              <span class="mist-hints-text">
+                空格 播放 / 暂停 · <kbd>←</kbd> <kbd>→</kbd> 快退 / 快进 · <kbd>↑</kbd> <kbd>↓</kbd>
+                音量 · Esc 收起
+              </span>
+              <button
+                type="button"
+                class="hints-close"
+                title="不再显示"
+                aria-label="不再显示快捷键提示"
+                @click="ui.setLyricHints(false)"
+              >
+                <AppIcon name="close" :size="11" />
+              </button>
             </div>
           </div>
-        </div>
-
-        <div v-if="ui.lyricHints" class="mist-hints">
-          <span class="mist-hints-text">
-            空格 播放 / 暂停 · <kbd>←</kbd> <kbd>→</kbd> 快退 / 快进 · <kbd>↑</kbd> <kbd>↓</kbd>
-            音量 · Esc 收起
-          </span>
-          <button
-            type="button"
-            class="hints-close"
-            title="不再显示"
-            aria-label="不再显示快捷键提示"
-            @click="ui.setLyricHints(false)"
-          >
-            <AppIcon name="close" :size="11" />
-          </button>
         </div>
       </footer>
     </div>
@@ -654,20 +663,39 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ------------------------------ 底部控制（玻璃拟态） ------------------------------ */
+/* ------------------------------ 角落浮块控制区（玻璃拟态） ------------------------------ */
 
+/*
+ * 控制区缩成右下角的一小块浮板：雾笺的舞台是整块玻璃，整条横栏会把
+ * 写字的低位区域和街景全挡住。信息布局不变，只是宽度收窄、行距收紧，
+ * 标签放不下时换到第二行。
+ */
 .mist-controls {
   position: relative;
   z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  width: min(760px, calc(100% - 48px));
-  margin: 0 auto 20px;
-  padding: 14px 22px 12px;
+  /*
+   * 注意这里不能设 gap：折叠时展开区高度为 0 但仍占一个 flex 项，
+   * gap 会让浮块底部凭空多出一截。与展开区的间距改由 .chip-expand 的
+   * margin-top 提供，折叠时随之归零。
+   */
+  /*
+   * 宽度跟随内容：折叠时贴着「封面+歌名+歌手」收缩，最长 420px；
+   * 悬停展开时长到固定宽度容纳进度条与按键。interpolate-size 让
+   * fit-content → 固定长度之间也能做过渡动画（不支持的旧内核只是瞬跳）。
+   */
+  width: fit-content;
+  max-width: min(420px, calc(100% - 36px));
+  interpolate-size: allow-keywords;
+  transition: width 0.32s var(--ease);
+  /* 顶部 margin 用 auto 把自己顶到底部，贴右下角 */
+  margin: auto 18px 18px 0;
+  align-self: flex-end;
+  padding: 12px 14px;
   border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 26px;
+  border-radius: 20px;
   /*
    * 雾面玻璃板：不是深色卡片，而是一层半透的白磨砂——
    * 像雾气上被薄薄擦开的一块，底下的雾与光斑还能透上来。
@@ -685,8 +713,77 @@ onBeforeUnmount(() => {
   width: 100%;
   min-width: 0;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 9px;
+}
+
+/*
+ * 悬停展开区：平时高度为 0，只留封面/歌名/歌手一行；
+ * 鼠标移上（或键盘焦点进入）浮块时展开出标签、进度条与按键。
+ * grid-template-rows 0fr→1fr 是高度自适应内容且可动画的写法。
+ */
+.chip-expand {
+  display: grid;
+  width: 100%;
+  margin-top: 0;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  /* 收起时：淡出比高度收拢快一点，内容先隐去再合拢 */
+  transition:
+    grid-template-rows 0.32s var(--ease),
+    margin-top 0.32s var(--ease),
+    opacity 0.14s ease;
+}
+
+/*
+ * 折叠时把展开区的宽度贡献清零——否则按钮行的固有宽度会撑开
+ * fit-content 的浮块，「宽度跟随文字」就失效了。
+ */
+.mist-controls:not(:hover):not(:focus-within) .chip-expand {
+  width: 0;
+}
+
+.mist-controls:hover,
+.mist-controls:focus-within {
+  /* 展开时放宽到固定的 420px，进度条和按键才有施展空间 */
+  width: min(420px, calc(100% - 36px));
+}
+
+.mist-controls:hover .chip-expand,
+.mist-controls:focus-within .chip-expand {
+  margin-top: 8px;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  /*
+   * 展开时：淡入再压晚半拍（0.12s 才开始）。缓动是强 ease-out，
+   * 高度在前 40% 时间里已涨过大半，等内容淡入到可见时基本不再被裁切。
+   */
+  transition:
+    grid-template-rows 0.32s var(--ease),
+    margin-top 0.32s var(--ease),
+    opacity 0.26s ease 0.12s;
+}
+
+.chip-expand-inner {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  /*
+   * 内容锚定在展开区底部：高度从 0 涨开时，内容像卷帘一样从 meta 行
+   * 下方整体落出，裁切线固定在顶边——读起来是「下拉」，而不是被底边
+   * 一刀切出来。
+   */
+  justify-content: flex-end;
+  gap: 8px;
+  overflow: hidden;
+  transform: translateY(-6px);
+  transition: transform 0.32s var(--ease);
+}
+
+.mist-controls:hover .chip-expand-inner,
+.mist-controls:focus-within .chip-expand-inner {
+  transform: translateY(0);
 }
 
 .meta-cover {
@@ -710,8 +807,8 @@ onBeforeUnmount(() => {
 
 .meta-title {
   overflow: hidden;
-  max-width: 32vw;
-  font-size: 13.5px;
+  max-width: 11em;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: -0.01em;
   text-overflow: ellipsis;
@@ -720,10 +817,10 @@ onBeforeUnmount(() => {
 
 .meta-sub {
   overflow: hidden;
-  max-width: 30vw;
+  max-width: 11em;
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -746,11 +843,35 @@ onBeforeUnmount(() => {
   text-underline-offset: 3px;
 }
 
+/*
+ * 标签组钉在 meta 行最右侧；折叠时收成 0 宽，悬停展开时与浮块的
+ * 宽度动画用同一时长/缓动一起滑出——不能 display 硬切，否则它会在
+ * 宽度动画中途突然挤进布局，看起来就是一卡。
+ */
 .meta-tags {
-  display: flex;
+  display: grid;
   flex: none;
+  margin-left: auto;
+  grid-template-columns: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-columns 0.32s var(--ease),
+    opacity 0.2s ease;
+}
+
+.mist-controls:hover .meta-tags,
+.mist-controls:focus-within .meta-tags {
+  grid-template-columns: 1fr;
+  opacity: 1;
+}
+
+.meta-tags-inner {
+  display: flex;
+  min-width: 0;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .tag {
@@ -783,9 +904,9 @@ onBeforeUnmount(() => {
 }
 
 .time {
-  min-width: 46px;
+  min-width: 38px;
   color: var(--text-faint);
-  font-size: 11.5px;
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -794,7 +915,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 9px;
 }
 
 .transport-side {
@@ -810,8 +931,8 @@ onBeforeUnmount(() => {
 }
 
 .transport-skip {
-  width: 38px;
-  height: 38px;
+  width: 32px;
+  height: 32px;
   color: var(--text);
 }
 
@@ -822,8 +943,8 @@ onBeforeUnmount(() => {
 /* 播放键：雾玻璃上一颗擦亮的水珠——深底上白色最亮，焦点不会丢 */
 .play-btn {
   display: grid;
-  width: 52px;
-  height: 52px;
+  width: 44px;
+  height: 44px;
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 50%;
@@ -911,42 +1032,31 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
+/*
+ * 音量条在按键行内向右展开：不再是浮层，而是音量按钮右侧的一段
+ * 0fr→1fr 的行内容器。浮块右边缘钉在屏幕上，展开时整排按键自然左移。
+ */
 .volume-pop {
-  position: absolute;
-  bottom: calc(100% + 14px);
-  left: 50%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-strong);
-  backdrop-filter: blur(var(--glass-blur));
-  box-shadow: var(--shadow-lg);
+  display: grid;
+  grid-template-columns: 0fr;
   opacity: 0;
-  visibility: hidden;
-  transform: translate(-50%, 8px);
   transition:
-    opacity 0.2s ease,
-    transform 0.2s ease,
-    visibility 0.2s;
+    grid-template-columns 0.25s var(--ease),
+    opacity 0.2s ease;
 }
 
-.volume-pop::after {
-  position: absolute;
-  right: 0;
-  bottom: -14px;
-  left: 0;
-  height: 14px;
-  content: '';
+.volume-pop-inner {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
 }
 
 .volume:hover .volume-pop,
 .volume-pop:hover {
+  grid-template-columns: 1fr;
   opacity: 1;
-  visibility: visible;
-  transform: translate(-50%, 0);
 }
 
 .volume-range {
