@@ -343,6 +343,29 @@ img {
   }
 }
 
+/* 骨架屏：一块带微光扫过的占位，所有骨架组件共用，避免各自维护渐变。 */
+.sk {
+  display: block;
+  border-radius: var(--radius-sm, 8px);
+  background: linear-gradient(
+    100deg,
+    var(--surface-hover) 24%,
+    color-mix(in srgb, var(--surface-strong) 76%, var(--surface-hover)) 42%,
+    var(--surface-hover) 60%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.5s var(--ease, ease) infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -90% 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

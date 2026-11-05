@@ -2,8 +2,10 @@
 import { computed, onMounted, ref } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
-import PageState from '@/components/common/PageState.vue';
+import ErrorState from '@/components/common/ErrorState.vue';
 import TrackList from '@/components/music/TrackList.vue';
+import TrackRowsSkeleton from '@/components/skeleton/TrackRowsSkeleton.vue';
+import { useDelayedLoading } from '@/composables/useDelayedLoading';
 import { useToast } from '@/composables/useToast';
 import { useTransport } from '@/composables/useTransport';
 import { useLibraryStore } from '@/stores/library';
@@ -18,6 +20,7 @@ const toast = useToast();
 
 const loading = ref(false);
 const error = ref('');
+const skeletonVisible = useDelayedLoading(loading);
 const clearOpen = ref(false);
 const clearing = ref(false);
 
@@ -82,7 +85,8 @@ async function clearHistory(): Promise<void> {
       </div>
     </header>
 
-    <PageState :loading="loading" :error="error" text="正在读取播放记录…" @retry="load" />
+    <ErrorState v-if="error" :message="error" @retry="load" />
+    <TrackRowsSkeleton v-else-if="skeletonVisible" :rows="8" />
 
     <TrackList
       v-if="!loading && !error"

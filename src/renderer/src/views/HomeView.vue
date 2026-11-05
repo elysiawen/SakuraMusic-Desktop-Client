@@ -3,13 +3,16 @@ import { computed, onMounted } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
-import PageState from '@/components/common/PageState.vue';
+import ErrorState from '@/components/common/ErrorState.vue';
+import GridSkeleton from '@/components/skeleton/GridSkeleton.vue';
+import RailSkeleton from '@/components/skeleton/RailSkeleton.vue';
 import type {
   DiscoverSection,
   Platform,
   PlaylistSummary,
   UnifiedTrack,
 } from '@/api/types';
+import { useDelayedLoading } from '@/composables/useDelayedLoading';
 import { useTransport } from '@/composables/useTransport';
 import { useHomeStore } from '@/stores/home';
 import { usePlayerStore } from '@/stores/player';
@@ -34,6 +37,9 @@ const router = useRouter();
 
 // 推荐流缓存在 store 里：进出主页不重新请求，只有点「刷新」才强拉。
 const { feed, loading, error } = storeToRefs(home);
+
+/** 快请求（多为磁盘缓存命中）不闪骨架，超过 140ms 才显示。 */
+const skeletonVisible = useDelayedLoading(loading);
 
 const sections = computed<FeedSection[]>(() =>
   (feed.value?.sections ?? []).map((section) => ({
@@ -115,7 +121,12 @@ onMounted(async () => {
       </span>
     </div>
 
-    <PageState :loading="loading" :error="error" text="正在向两个平台要推荐…" @retry="refresh" />
+    <ErrorState v-if="error" :message="error" @retry="refresh" />
+    <template v-else-if="skeletonVisible">
+      <RailSkeleton />
+      <RailSkeleton />
+      <GridSkeleton :count="6" />
+    </template>
 
     <section v-if="isEmpty" class="empty-feed">
       <span class="empty-disc"><AppIcon name="music" :size="26" :stroke-width="1.3" /></span>

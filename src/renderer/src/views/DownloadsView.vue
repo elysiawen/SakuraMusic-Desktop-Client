@@ -2,9 +2,11 @@
 import { computed, onMounted, ref } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
-import PageState from '@/components/common/PageState.vue';
+import ErrorState from '@/components/common/ErrorState.vue';
 import TrackList from '@/components/music/TrackList.vue';
+import TrackRowsSkeleton from '@/components/skeleton/TrackRowsSkeleton.vue';
 import type { Quality, UnifiedTrack } from '@/api/types';
+import { useDelayedLoading } from '@/composables/useDelayedLoading';
 import { useToast } from '@/composables/useToast';
 import { useTransport } from '@/composables/useTransport';
 import { useOfflineStore } from '@/stores/offline';
@@ -37,6 +39,9 @@ function toPlayable(item: OfflineItem): UnifiedTrack {
 
 const tracks = computed<UnifiedTrack[]>(() => offline.items.map(toPlayable));
 const count = computed(() => offline.items.length);
+
+/** 已有内容时后台刷新不占页面，只有「空列表首次加载」才走骨架。 */
+const skeletonVisible = useDelayedLoading(computed(() => offline.loading && count.value === 0));
 
 onMounted(async () => {
   void offline.load();
@@ -111,12 +116,8 @@ async function clearAll(): Promise<void> {
       </div>
     </header>
 
-    <PageState
-      :loading="offline.loading && count === 0"
-      :error="offline.error"
-      text="正在读取本地文件…"
-      @retry="offline.load()"
-    />
+    <ErrorState v-if="offline.error" :message="offline.error" @retry="offline.load()" />
+    <TrackRowsSkeleton v-else-if="skeletonVisible" :rows="8" />
 
     <TrackList
       v-if="!offline.loading || count > 0"

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
-import PageState from '@/components/common/PageState.vue';
+import ErrorState from '@/components/common/ErrorState.vue';
 import TrackList from '@/components/music/TrackList.vue';
+import TrackRowsSkeleton from '@/components/skeleton/TrackRowsSkeleton.vue';
+import { useDelayedLoading } from '@/composables/useDelayedLoading';
 import { useTransport } from '@/composables/useTransport';
 import { useLibraryStore } from '@/stores/library';
 
@@ -15,6 +17,7 @@ const transport = useTransport();
 
 const loading = ref(false);
 const error = ref('');
+const skeletonVisible = useDelayedLoading(loading);
 
 const count = computed(() => library.favorites.length);
 /** 收藏的曲目通常带多个平台来源，把出现过的平台数出来。 */
@@ -63,7 +66,8 @@ function playAll(): void {
       </button>
     </header>
 
-    <PageState :loading="loading" :error="error" text="正在读取收藏…" @retry="load" />
+    <ErrorState v-if="error" :message="error" @retry="load" />
+    <TrackRowsSkeleton v-else-if="skeletonVisible" :rows="8" />
 
     <TrackList
       v-if="!loading && !error"

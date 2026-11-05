@@ -3,8 +3,10 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
 import EmptyState from '@/components/common/EmptyState.vue';
-import PageState from '@/components/common/PageState.vue';
+import ErrorState from '@/components/common/ErrorState.vue';
+import GridSkeleton from '@/components/skeleton/GridSkeleton.vue';
 import type { Platform, PlaylistSummary } from '@/api/types';
+import { useDelayedLoading } from '@/composables/useDelayedLoading';
 import { useToast } from '@/composables/useToast';
 import { useLibraryStore } from '@/stores/library';
 import { usePreferencesStore } from '@/stores/preferences';
@@ -40,6 +42,7 @@ const platformItems = computed<PlaylistSummary[]>(() =>
 const platformLoading = computed(() =>
   Boolean(source.value && library.platformLoading[source.value]),
 );
+const skeletonVisible = useDelayedLoading(platformLoading);
 
 onMounted(async () => {
   source.value = boundPlatforms.value[0] ?? null;
@@ -137,12 +140,8 @@ async function importItem(item: PlaylistSummary): Promise<void> {
     </EmptyState>
 
     <template v-else>
-      <PageState
-        :loading="platformLoading"
-        :error="platformError"
-        :text="`正在读取${platformName(source)}账号…`"
-        @retry="reloadPlatform"
-      />
+      <ErrorState v-if="platformError" :message="platformError" @retry="reloadPlatform" />
+      <GridSkeleton v-else-if="skeletonVisible" :count="8" :min="150" />
 
       <template v-if="!platformLoading && !platformError">
         <div v-if="platformItems.length > 0" class="grid">

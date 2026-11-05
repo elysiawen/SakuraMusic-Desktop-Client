@@ -3,11 +3,13 @@ import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
-import PageState from '@/components/common/PageState.vue';
+import ErrorState from '@/components/common/ErrorState.vue';
 import PlaylistDialog from '@/components/library/PlaylistDialog.vue';
 import TrackList from '@/components/music/TrackList.vue';
+import TrackPageSkeleton from '@/components/skeleton/TrackPageSkeleton.vue';
 import { libraryApi } from '@/api/library';
 import type { Playlist, UnifiedTrack } from '@/api/types';
+import { useDelayedLoading } from '@/composables/useDelayedLoading';
 import { useToast } from '@/composables/useToast';
 import { useLibraryStore } from '@/stores/library';
 import { cachedImage } from '@/utils/cacheImage';
@@ -23,6 +25,7 @@ const playlist = ref<Playlist | null>(null);
 const items = ref<UnifiedTrack[]>([]);
 const loading = ref(false);
 const error = ref('');
+const skeletonVisible = useDelayedLoading(loading);
 /** 编辑信息 / 删除确认都走弹窗，和 web 端一致，不再用页内表单和「再点一次」。 */
 const editOpen = ref(false);
 const deleteOpen = ref(false);
@@ -92,7 +95,8 @@ async function confirmDelete(): Promise<void> {
 
 <template>
   <div class="playlist-view">
-    <PageState :loading="loading" :error="error" text="正在读取歌单…" @retry="load" />
+    <ErrorState v-if="error" :message="error" @retry="load" />
+    <TrackPageSkeleton v-else-if="skeletonVisible" :rows="8" :cover="148" />
 
     <template v-if="!loading && !error && playlist">
       <header class="hero">

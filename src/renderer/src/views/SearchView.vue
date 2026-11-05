@@ -2,7 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
+import ErrorState from '@/components/common/ErrorState.vue';
 import TrackList from '@/components/music/TrackList.vue';
+import GridSkeleton from '@/components/skeleton/GridSkeleton.vue';
+import TrackRowsSkeleton from '@/components/skeleton/TrackRowsSkeleton.vue';
 import { musicApi } from '@/api';
 import type {
   PlatformStatus,
@@ -48,6 +51,8 @@ const searched = ref('');
 
 let debounceTimer: number | undefined;
 let requestToken = 0;
+/** 回车提交时跳过下面 watcher 的 380ms 去抖，立即发请求。 */
+let submitPending = false;
 
 const tracks = computed(() => result.value?.items ?? []);
 const artists = computed(() => result.value?.artists ?? []);
@@ -63,6 +68,12 @@ const total = computed(() => {
 
 const hasResults = computed(() => total.value > 0);
 const platformErrors = computed(() => platforms.value.filter((item) => !item.ok));
+
+/**
+ * 检索期间直接用骨架屏占住结果区：回车就有画面变化，不再是「静止几秒后突然出结果」。
+ * 这里不做延迟显示——明确提交时用户需要立刻得到反馈。
+ */
+const skeletonVisible = computed(() => loading.value);
 
 async function run(): Promise<void> {
   const value = keyword.value.trim();
@@ -136,24 +147,39 @@ function openPlaylist(item: PlaylistSummary): void {
 }
 
 /**
- * 顶栏搜索框送进来的关键词。
+ * 顶栏搜索框送进来的关键词（回车或点搜索图标）。
  *
- * 只赋值、不直接 `run()`：`keyword` 的 watcher 会去抖后搜索，这里再发一次就是两个请求。
- * 关键词没变时 watcher 不触发，才需要手动搜一次（回车重复提交同一个词）。
+ * 明确提交不做去抖：立刻发请求并同步把 loading 置起来；
+ * `keyword` 的 watcher 只负责同步页码，不再排队第二次请求。
  */
 function applyKeyword(event: Event): void {
   const value = (event as CustomEvent<{ keyword?: string }>).detail?.keyword?.trim();
   if (!value) return;
+
+  if (debounceTimer !== undefined) {
+    window.clearTimeout(debounceTimer);
+    debounceTimer = undefined;
+  }
+
   if (value === keyword.value) {
     void run();
     return;
   }
+
+  submitPending = true;
+  page.value = 1;
   keyword.value = value;
+  void run();
 }
 
 /** 换关键词一律回到第一页：否则会带着旧页码去搜一个新词。 */
 watch(keyword, () => {
   page.value = 1;
+  if (submitPending) {
+    // 回车已经直接搜过了，这里只同步页码，不再排队第二次请求。
+    submitPending = false;
+    return;
+  }
   if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
   debounceTimer = window.setTimeout(() => {
     debounceTimer = undefined;
@@ -174,27 +200,34 @@ onBeforeUnmount(() => {
 <template>
   <div class="search-view">
     <!-- 页内不放搜索框了：搜索统一从顶栏输入，这里只负责分类型看结果 -->
-    <nav class="type-tabs" role="tablist" aria-label="搜索类型">
-      <button
-        v-for="item in TYPES"
-        :key="item.id"
-        type="button"
-        role="tab"
-        class="type-tab"
-        :class="{ active: type === item.id }"
-        :aria-selected="type === item.id"
-        @click="chooseType(item.id)"
-      >
-        {{ item.label }}
-      </button>
-    </nav>
+    <div class="type-bar">
+      <nav class="type-tabs" role="tablist" aria-label="搜索类型">
+        <button
+          v-for="item in TYPES"
+          :key="item.id"
+          type="button"
+          role="tab"
+          class="type-tab"
+          :class="{ active: type === item.id }"
+          :aria-selected="type === item.id"
+          @click="chooseType(item.id)"
+        >
+          {{ item.label }}
+        </button>
+      </nav>
+      <!-- 请求可能很快，也可能要等上游：立刻给一个「在搜」的信号，别让界面看起来卡住 -->
+      <span v-if="loading" class="searching">
+        <AppIcon name="refresh" :size="11" class="spin" />
+        正在搜索{{ searched ? `「${searched}」` : '' }}…
+      </span>
+    </div>
 
-    <p v-if="error" class="notice warn">{{ error }}</p>
+    <ErrorState v-if="error" :message="error" @retry="run" />
 
-    <section v-if="loading && !hasResults" class="state">
-      <span class="spinner" />
-      <p>正在向两个平台取结果…</p>
-    </section>
+    <div v-else-if="skeletonVisible" class="skeleton">
+      <TrackRowsSkeleton v-if="type === 'song'" :rows="10" head />
+      <GridSkeleton v-else :count="8" :round="type === 'artist'" :pad="10" />
+    </div>
 
     <section v-else-if="!searched" class="state">
       <span class="state-disc"><AppIcon name="search" :size="26" :stroke-width="1.3" /></span>
@@ -301,6 +334,24 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 22px;
   animation: fade-up var(--dur-slow) var(--ease);
+}
+
+.type-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.searching {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 4px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .type-tabs {
@@ -456,16 +507,8 @@ onBeforeUnmount(() => {
   padding: 0 0 24px;
 }
 
-.notice {
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-}
-
-.notice.warn {
-  border-color: color-mix(in srgb, #e0453a 35%, transparent);
-  color: #e0453a;
+.skeleton {
+  padding: 0 0 24px;
 }
 
 .state {
@@ -501,22 +544,6 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.7;
-}
-
-.spinner {
-  width: 26px;
-  height: 26px;
-  margin-bottom: 14px;
-  border: 2px solid var(--border-strong);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 800ms linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 </style>

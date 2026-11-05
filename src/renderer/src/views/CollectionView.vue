@@ -2,10 +2,12 @@
 import { computed, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
-import PageState from '@/components/common/PageState.vue';
+import ErrorState from '@/components/common/ErrorState.vue';
 import TrackList from '@/components/music/TrackList.vue';
+import TrackPageSkeleton from '@/components/skeleton/TrackPageSkeleton.vue';
 import { musicApi } from '@/api';
 import type { CollectionDetail, Platform } from '@/api/types';
+import { useDelayedLoading } from '@/composables/useDelayedLoading';
 import { cachedImage } from '@/utils/cacheImage';
 import { parsePlatform, platformName } from '@/utils/format';
 
@@ -18,6 +20,7 @@ const isToplist = computed(() => route.name === 'toplist');
 const detail = ref<CollectionDetail | null>(null);
 const loading = ref(false);
 const error = ref('');
+const skeletonVisible = useDelayedLoading(loading);
 
 async function load(): Promise<void> {
   if (!collectionId.value) return;
@@ -40,12 +43,8 @@ watch([platform, collectionId, isToplist], load, { immediate: true });
 
 <template>
   <div class="detail-view">
-    <PageState
-      :loading="loading"
-      :error="error"
-      :text="isToplist ? '正在加载榜单…' : '正在加载歌单…'"
-      @retry="load"
-    />
+    <ErrorState v-if="error" :message="error" @retry="load" />
+    <TrackPageSkeleton v-else-if="skeletonVisible" :rows="8" :cover="148" />
 
     <template v-if="!loading && !error && detail">
       <header class="hero">
