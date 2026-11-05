@@ -19,6 +19,10 @@ export interface LyricResult {
   lrc: string;
   trans: string;
   roma: string;
+  /** 网易云 YRC 逐字歌词原文（上游有才有，按歌曲覆盖）。 */
+  yrc?: string;
+  /** QQ 音乐 QRC 逐字歌词原文（上游有才有，按歌曲覆盖）。 */
+  qrc?: string;
 }
 
 export interface UnifiedTrack {

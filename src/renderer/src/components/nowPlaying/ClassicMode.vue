@@ -6,7 +6,7 @@ import { useRoomStore } from '@/stores/room';
 import { useUiStore } from '@/stores/ui';
 import { formatTime, platformName } from '@/utils/format';
 import { cachedImage } from '@/utils/cacheImage';
-import { activeLineIndex, parseLyric, type LyricLine } from '@/utils/lyric';
+import { activeLineIndex, parseLyricResult, type LyricLine } from '@/utils/lyric';
 import NowPlayingTopActions from './NowPlayingTopActions.vue';
 import QualityPicker from '@/components/layout/QualityPicker.vue';
 
@@ -51,9 +51,7 @@ const sourceText = computed(() => {
   const platform = player.activeSource?.platform;
   return platform ? platformName(platform) : '';
 });
-const lines = computed<LyricLine[]>(() =>
-  parseLyric(player.lyric.lrc, player.lyric.trans, player.lyric.roma),
-);
+const lines = computed<LyricLine[]>(() => parseLyricResult(player.lyric).lines);
 const activeIndex = computed(() => activeLineIndex(lines.value, player.currentTime));
 const hasLyric = computed(() => lines.value.length > 0);
 
@@ -76,6 +74,34 @@ function lineOpacity(index: number): number {
 
 function setLineRef(index: number, element: Element | null): void {
   if (element instanceof HTMLElement) lineRefs.value[index] = element;
+}
+
+/** 当前行的逐字元素：逐字歌词活跃行的每个字一个 span，rAF 里逐帧写 --wp。 */
+const wordEls: (HTMLElement | null)[] = [];
+function setWordRef(lineIndex: number, wordIndex: number, element: Element | null): void {
+  if (lineIndex !== activeIndex.value) return;
+  wordEls[wordIndex] = element instanceof HTMLElement ? element : null;
+}
+
+/* 逐字擦除主循环：activeIndex 本身走 timeupdate（约 4Hz）够用，字内进度必须逐帧。 */
+let rafId = 0;
+
+function tick(): void {
+  rafId = requestAnimationFrame(tick);
+  if (!ui.lyricsOpen) return;
+  const seconds = player.preciseTime();
+  const index = activeLineIndex(lines.value, seconds);
+  const line = index >= 0 ? lines.value[index] : undefined;
+  if (!line?.words?.length) return;
+  wordEls.length = line.words.length;
+  for (let wi = 0; wi < line.words.length; wi += 1) {
+    const element = wordEls[wi];
+    const word = line.words[wi];
+    if (!element || !word) continue;
+    const progress =
+      seconds >= word.end ? 1 : seconds <= word.start ? 0 : (seconds - word.start) / Math.max(0.01, word.end - word.start);
+    element.style.setProperty('--wp', `${(progress * 100).toFixed(2)}%`);
+  }
 }
 
 /** 让当前行落在容器约 36% 高度处，而不是生硬地居中。 */
@@ -206,10 +232,12 @@ function onKeydown(event: KeyboardEvent): void {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown);
+  rafId = requestAnimationFrame(tick);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
+  cancelAnimationFrame(rafId);
 });
 </script>
 
@@ -311,7 +339,12 @@ onBeforeUnmount(() => {
                 :style="{ opacity: lineOpacity(index) }"
                 @click="seekTo(line.time)"
               >
-                <span class="lyric-text">{{ line.text || '♪' }}</span>
+                <span class="lyric-text"><template v-if="line.words?.length"><span
+                  v-for="(word, wordIndex) in line.words"
+                  :key="wordIndex"
+                  :ref="(element) => setWordRef(index, wordIndex, element as Element | null)"
+                  class="lyric-word"
+                >{{ word.text }}</span></template><template v-else>{{ line.text || '♪' }}</template></span>
                 <span v-if="line.trans" class="lyric-trans">{{ line.trans }}</span>
               </p>
             </template>
@@ -770,6 +803,27 @@ onBeforeUnmount(() => {
 
 .lyric-line.is-active .lyric-text {
   text-shadow: 0 0 26px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/*
+ * 逐字擦除（上游给了 YRC/QRC 时）：每个字的 --wp 由 rAF 逐帧写入（0%→100%），
+ * 唱到的字按自身时间轴擦亮成主题色，没唱到的压成半透白。
+ */
+.lyric-line.is-active .lyric-word {
+  --wp: 0%;
+  background-image: linear-gradient(
+    100deg,
+    var(--accent) calc(var(--wp) - 6%),
+    color-mix(in srgb, var(--text) 42%, transparent) calc(var(--wp) + 10%)
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+/* hover 变主题色那条规则对逐字行不适用：背景裁剪的文字得保持透明底色。 */
+.lyric-line.is-active:hover .lyric-word {
+  color: transparent;
 }
 
 .lyric-empty {

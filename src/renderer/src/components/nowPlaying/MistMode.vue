@@ -6,7 +6,7 @@ import { useRoomStore } from '@/stores/room';
 import { useUiStore } from '@/stores/ui';
 import { formatTime, platformName } from '@/utils/format';
 import { cachedImage } from '@/utils/cacheImage';
-import { activeLineIndex, parseLyric, type LyricLine } from '@/utils/lyric';
+import { activeLineIndex, parseLyricResult, type LyricLine } from '@/utils/lyric';
 import { extractPalette, type CoverPalette } from '@/utils/palette';
 import NowPlayingTopActions from './NowPlayingTopActions.vue';
 import QualityPicker from '@/components/layout/QualityPicker.vue';
@@ -54,9 +54,7 @@ const sourceText = computed(() => {
   const platform = player.activeSource?.platform;
   return platform ? platformName(platform) : '';
 });
-const lines = computed<LyricLine[]>(() =>
-  parseLyric(player.lyric.lrc, player.lyric.trans, player.lyric.roma),
-);
+const lines = computed<LyricLine[]>(() => parseLyricResult(player.lyric).lines);
 const hasLyric = computed(() => lines.value.length > 0);
 
 /** 退回纯文字时的当前行（见 ImmersiveMode：activeIdx 只在 rAF 里用逐帧时钟更新）。 */
@@ -135,14 +133,26 @@ function sampleVocal(): number {
 /* ------------------------------ 歌词 → 雾笺的行 ------------------------------ */
 
 /**
- * sakura 的歌词只有行级时间：雾笺的逐字时间轴由 graphemeTiming 按行时长均摊。
- * 行结束取下一行开始（封顶 8 秒，免得长间奏里字写得太慢），最后一行给 4 秒。
+ * 雾笺按字的书写节奏吃 word 级时间轴：上游给了逐字歌词（YRC/QRC）就照真实节奏写；
+ * 只有按行 LRC 的歌 words 为空，由 graphemeTiming 按行时长均摊。
+ * 行结束优先用逐字数据自带的行尾，否则取下一行开始（封顶 8 秒，免得长间奏里字写得太慢），
+ * 最后一行给 4 秒。
  */
 function toFoliaLines(source: LyricLine[]): Line[] {
   return source.map((line, index) => {
     const next = source[index + 1]?.time;
-    const end = next === undefined ? line.time + 4 : Math.max(line.time, Math.min(next, line.time + 8));
-    return { fullText: line.text, startTime: line.time, endTime: end, words: [] };
+    const fallbackEnd =
+      next === undefined ? line.time + 4 : Math.max(line.time, Math.min(next, line.time + 8));
+    return {
+      fullText: line.text,
+      startTime: line.time,
+      endTime: line.end ?? fallbackEnd,
+      words: (line.words ?? []).map((word) => ({
+        text: word.text,
+        startTime: word.start,
+        endTime: word.end,
+      })),
+    };
   });
 }
 

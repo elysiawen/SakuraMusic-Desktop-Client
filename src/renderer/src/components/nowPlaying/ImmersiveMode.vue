@@ -6,7 +6,7 @@ import { useRoomStore } from '@/stores/room';
 import { useUiStore } from '@/stores/ui';
 import { formatTime, platformName } from '@/utils/format';
 import { cachedImage } from '@/utils/cacheImage';
-import { activeLineIndex, parseLyric, type LyricLine } from '@/utils/lyric';
+import { activeLineIndex, parseLyricResult, type LyricLine } from '@/utils/lyric';
 import { extractPalette, type CoverPalette } from '@/utils/palette';
 import NowPlayingTopActions from './NowPlayingTopActions.vue';
 import QualityPicker from '@/components/layout/QualityPicker.vue';
@@ -52,9 +52,7 @@ const sourceText = computed(() => {
   const platform = player.activeSource?.platform;
   return platform ? platformName(platform) : '';
 });
-const lines = computed<LyricLine[]>(() =>
-  parseLyric(player.lyric.lrc, player.lyric.trans, player.lyric.roma),
-);
+const lines = computed<LyricLine[]>(() => parseLyricResult(player.lyric).lines);
 const hasLyric = computed(() => lines.value.length > 0);
 
 /**
@@ -90,6 +88,13 @@ const sweepEl = ref<HTMLElement | null>(null);
 function setSweepRef(index: number, element: Element | null): void {
   if (index !== activeIdx.value) return;
   sweepEl.value = element instanceof HTMLElement ? element : null;
+}
+
+/** 当前行的逐字元素：逐字歌词活跃行的每个字一个 span，rAF 里逐帧写 --wp。 */
+const wordEls: (HTMLElement | null)[] = [];
+function setWordRef(lineIndex: number, wordIndex: number, element: Element | null): void {
+  if (lineIndex !== activeIdx.value) return;
+  wordEls[wordIndex] = element instanceof HTMLElement ? element : null;
 }
 
 /** 让当前行落在容器约 38% 高度处。 */
@@ -358,14 +363,27 @@ function tick(now: number): void {
   drawFluid(t);
   drawSpectrum();
 
-  // 行内扫光：直接写 CSS 变量，不走响应式（60fps 的 Vue 重渲染太贵）。
-  const element = sweepEl.value;
+  // 行内扫光/逐字擦除：直接写 CSS 变量，不走响应式（60fps 的 Vue 重渲染太贵）。
   const line = index >= 0 ? lines.value[index] : undefined;
-  if (element && line) {
-    const nextLine = lines.value[index + 1];
-    const span = nextLine ? Math.max(0.4, nextLine.time - line.time) : 3;
-    const progress = Math.min(1, Math.max(0, (seconds - line.time) / span));
-    element.style.setProperty('--sweep', `${(progress * 100).toFixed(2)}%`);
+  if (line?.words?.length) {
+    // 逐字：唱到的字按自身时间轴擦亮，整行扫光让位（模板里已不挂 is-sweeping）
+    wordEls.length = line.words.length;
+    for (let wi = 0; wi < line.words.length; wi += 1) {
+      const element = wordEls[wi];
+      const word = line.words[wi];
+      if (!element || !word) continue;
+      const progress =
+        seconds >= word.end ? 1 : seconds <= word.start ? 0 : (seconds - word.start) / Math.max(0.01, word.end - word.start);
+      element.style.setProperty('--wp', `${(progress * 100).toFixed(2)}%`);
+    }
+  } else {
+    const element = sweepEl.value;
+    if (element && line) {
+      const nextLine = lines.value[index + 1];
+      const span = nextLine ? Math.max(0.4, nextLine.time - line.time) : 3;
+      const progress = Math.min(1, Math.max(0, (seconds - line.time) / span));
+      element.style.setProperty('--sweep', `${(progress * 100).toFixed(2)}%`);
+    }
   }
 }
 
@@ -592,8 +610,13 @@ onBeforeUnmount(() => {
               <span
                 :ref="(element) => setSweepRef(index, element as Element | null)"
                 class="lyric-text"
-                :class="{ 'is-sweeping': index === activeIdx }"
-              >{{ line.text || '♪' }}</span>
+                :class="{ 'is-sweeping': index === activeIdx && !line.words?.length }"
+              ><template v-if="line.words?.length"><span
+                v-for="(word, wordIndex) in line.words"
+                :key="wordIndex"
+                :ref="(element) => setWordRef(index, wordIndex, element as Element | null)"
+                class="lyric-word"
+              >{{ word.text }}</span></template><template v-else>{{ line.text || '♪' }}</template></span>
               <span v-if="line.trans" class="lyric-trans">{{ line.trans }}</span>
             </p>
           </template>
@@ -1040,6 +1063,26 @@ onBeforeUnmount(() => {
 }
 
 .lyric-line.is-active:hover .lyric-text {
+  color: transparent;
+}
+
+/*
+ * 逐字擦除（上游给了 YRC/QRC 时）：每个字的 --wp 由 rAF 逐帧写入（0%→100%），
+ * 已唱部分实色、未唱部分半透，过渡带收窄到字内，「唱到哪个字亮哪个字」。
+ */
+.lyric-line.is-active .lyric-word {
+  --wp: 0%;
+  background-image: linear-gradient(
+    100deg,
+    var(--text) calc(var(--wp) - 8%),
+    color-mix(in srgb, var(--text) 34%, transparent) calc(var(--wp) + 12%)
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+.lyric-line.is-active:hover .lyric-word {
   color: transparent;
 }
 
