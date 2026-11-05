@@ -1,118 +1,150 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
+import { libraryApi } from '@/api/library';
 import type { Playlist } from '@/api/types';
 import { useToast } from '@/composables/useToast';
 import { useLibraryStore } from '@/stores/library';
 
 /**
- * 新建歌单弹窗：名称 + 描述两个字段，与 web 端同一套表单。
- *
- * 之前音乐库里是一条内联输入框，只能填名字；描述要进歌单页再补，
- * 干脆照 web 做成弹窗，建完就直接进歌单页往里加歌。
+ * 新建 / 编辑歌单信息，和 web 端一样共用一个弹窗：
+ * 不传 `playlist` 是新建，传了就进入编辑模式（名称 + 描述一次改完）。
  */
-const props = withDefaults(defineProps<{ visible: boolean; defaultName?: string }>(), {
-  defaultName: '',
-});
+const props = defineProps<{ visible: boolean; playlist?: Playlist | null }>();
+const emit = defineEmits<{
+  (event: 'close'): void;
+  (event: 'created', playlist: Playlist): void;
+  (event: 'saved', input: { name: string; description: string }): void;
+}>();
 
-const emit = defineEmits<{ close: []; created: [playlist: Playlist] }>();
-
-const library = useLibraryStore();
 const toast = useToast();
-
+const library = useLibraryStore();
 const name = ref('');
 const description = ref('');
-const submitting = ref(false);
+const busy = ref(false);
+const error = ref('');
 const nameInput = ref<HTMLInputElement | null>(null);
 
-watch(
-  () => props.visible,
-  async (visible) => {
-    if (!visible) return;
-    name.value = props.defaultName;
-    description.value = '';
-    submitting.value = false;
-    await nextTick();
-    nameInput.value?.focus();
-    nameInput.value?.select();
-  },
-);
+const isEdit = computed(() => !!props.playlist);
 
-async function submit(): Promise<void> {
-  const value = name.value.trim();
-  if (!value || submitting.value) return;
-  submitting.value = true;
-  try {
-    const playlist = await library.createPlaylist(value, description.value.trim() || undefined);
-    toast.success(`已创建「${playlist.name}」`);
-    emit('created', playlist);
-    emit('close');
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '创建歌单失败');
-  } finally {
-    submitting.value = false;
-  }
+function close(): void {
+  if (busy.value) return;
+  emit('close');
 }
 
-/** 焦点可能不在弹窗内，Esc 统一在窗口上监听。 */
 function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && props.visible) emit('close');
+  if (props.visible && event.key === 'Escape') close();
 }
 
 onMounted(() => window.addEventListener('keydown', onKeydown));
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
+
+/** 每次打开都从当前歌单重新取值，避免上次没保存的输入串到下一次。 */
+watch(
+  () => props.visible,
+  async (visible) => {
+    if (!visible) return;
+    name.value = props.playlist?.name ?? '';
+    description.value = props.playlist?.description ?? '';
+    error.value = '';
+    await nextTick();
+    nameInput.value?.focus();
+  },
+);
+
+async function submit(): Promise<void> {
+  if (busy.value) return;
+  const trimmed = name.value.trim();
+  if (!trimmed) {
+    error.value = '给歌单起个名字吧';
+    return;
+  }
+
+  busy.value = true;
+  error.value = '';
+  try {
+    if (props.playlist) {
+      const input = { name: trimmed, description: description.value.trim() };
+      // store 会顺手把「我的音乐」列表里的名称同步掉；详情页再靠 saved 就地更新。
+      await library.updatePlaylist(props.playlist.id, input);
+      emit('saved', input);
+      emit('close');
+    } else {
+      const result = await libraryApi.createPlaylist(trimmed, description.value.trim());
+      toast.info(`已创建歌单「${result.playlist.name}」`);
+      emit('created', result.playlist);
+      emit('close');
+      name.value = '';
+      description.value = '';
+    }
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : isEdit.value ? '保存失败' : '创建失败';
+  } finally {
+    busy.value = false;
+  }
+}
 </script>
 
 <template>
-  <div v-if="visible" class="overlay" @click.self="emit('close')">
-    <div class="dialog glass-strong" role="dialog" aria-modal="true" aria-label="新建歌单">
-      <header class="dialog-head">
-        <div>
-          <p class="eyebrow">新建歌单</p>
-          <h2>整理你喜欢的歌</h2>
-        </div>
-        <button type="button" class="btn-icon" aria-label="关闭" @click="emit('close')">
-          <AppIcon name="close" :size="15" />
-        </button>
-      </header>
+  <!-- Teleport 到 body：页面容器有 fade-up 动画（transform），留在里面会让 fixed 遮罩跑偏。 -->
+  <Teleport to="body">
+    <div v-if="visible" class="overlay" @click.self="close">
+      <div
+        class="dialog glass-strong"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="isEdit ? '编辑歌单信息' : '新建歌单'"
+      >
+        <header class="dialog-head">
+          <div>
+            <p class="eyebrow">{{ isEdit ? '歌单信息' : '我的音乐' }}</p>
+            <h2>{{ isEdit ? '编辑歌单信息' : '新建歌单' }}</h2>
+          </div>
+          <button type="button" class="btn-icon" aria-label="关闭" @click="close">
+            <AppIcon name="close" :size="15" />
+          </button>
+        </header>
 
-      <label class="field">
-        <span class="field-label">歌单名称</span>
-        <input
-          ref="nameInput"
-          v-model="name"
-          class="input"
-          maxlength="60"
-          placeholder="给歌单起个名字（1-60 字）"
-          @keyup.enter="submit"
-        />
-      </label>
+        <p class="desc">
+          {{ isEdit ? '改个名字，顺手写两句简介。' : '给歌单起个名字，描述可以先空着。' }}
+        </p>
 
-      <label class="field">
-        <span class="field-label">描述（可选）</span>
-        <textarea
-          v-model="description"
-          class="textarea"
-          rows="5"
-          maxlength="200"
-          placeholder="写点什么，之后可以在歌单页看到"
-        />
-        <span class="counter">{{ description.length }} / 200</span>
-      </label>
+        <form class="form" @submit.prevent="submit">
+          <label class="field">
+            <span>名称</span>
+            <input
+              ref="nameInput"
+              v-model="name"
+              type="text"
+              maxlength="50"
+              placeholder="比如：深夜通勤"
+              :disabled="busy"
+            />
+          </label>
 
-      <footer class="dialog-foot">
-        <button type="button" class="mini" @click="emit('close')">取消</button>
-        <button
-          type="button"
-          class="mini primary"
-          :disabled="!name.trim() || submitting"
-          @click="submit"
-        >
-          {{ submitting ? '创建中…' : '创建' }}
-        </button>
-      </footer>
+          <label class="field">
+            <span>描述 <small>可选</small></span>
+            <textarea
+              v-model="description"
+              rows="3"
+              maxlength="200"
+              placeholder="写点什么，方便以后想起这张歌单"
+              :disabled="busy"
+            />
+          </label>
+
+          <p v-if="error" class="error">{{ error }}</p>
+
+          <div class="actions">
+            <button type="button" class="mini" :disabled="busy" @click="close">取消</button>
+            <button type="submit" class="mini primary" :disabled="busy || !name.trim()">
+              {{ busy ? '保存中…' : isEdit ? '保存修改' : '创建歌单' }}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -146,10 +178,31 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
   gap: 12px;
 }
 
+.dialog-head .eyebrow {
+  margin: 0 0 2px;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .dialog-head h2 {
-  margin-top: 3px;
-  font-size: 16px;
-  font-weight: 750;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.desc {
+  margin: -4px 0 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
 }
 
 .field {
@@ -158,47 +211,63 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
   gap: 6px;
 }
 
-.textarea {
+.field > span {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.field small {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.field input,
+.field textarea {
   width: 100%;
-  padding: 10px 12px;
+  padding: 9px 11px;
   border: 1px solid var(--input-border);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--input-bg);
   color: var(--text);
-  font-size: 12px;
-  line-height: 1.7;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
   outline: none;
   resize: vertical;
+  transition: border-color var(--dur) var(--ease);
 }
 
-.textarea:focus {
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+.field input:focus,
+.field textarea:focus {
+  border-color: var(--accent);
 }
 
-.counter {
-  align-self: flex-end;
+.field input::placeholder,
+.field textarea::placeholder {
   color: var(--text-faint);
-  font-size: 10.5px;
 }
 
-.dialog-foot {
+.error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 11.5px;
+}
+
+.actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 4px;
+  margin-top: 3px;
 }
 
 .mini {
-  display: inline-flex;
-  height: 30px;
-  align-items: center;
-  gap: 4px;
-  padding: 0 14px;
+  height: 32px;
+  padding: 0 15px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--surface-hover);
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 650;
   transition:
     border-color var(--dur) var(--ease),
@@ -210,14 +279,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
   color: var(--text);
 }
 
+.mini.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.mini.primary:hover:not(:disabled) {
+  color: var(--accent-contrast);
+  filter: brightness(1.06);
+}
+
 .mini:disabled {
   opacity: 0.55;
   cursor: default;
-}
-
-.mini.primary {
-  border-color: transparent;
-  background: linear-gradient(140deg, var(--accent), var(--accent-2));
-  color: var(--accent-contrast);
 }
 </style>

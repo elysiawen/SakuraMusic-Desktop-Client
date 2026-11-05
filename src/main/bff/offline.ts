@@ -229,11 +229,7 @@ export async function handleOffline(
 
     try {
       const item = await downloadTrack(body, broadcast);
-      const state = library();
-      sendJson(res, 200, {
-        item,
-        overLimit: state.usedBytes > state.limitBytes,
-      });
+      sendJson(res, 200, { item });
     } catch (error) {
       sendJson(
         res,

@@ -130,6 +130,13 @@ export const useRoomStore = defineStore('room', () => {
    */
   let failedKey: string | null = null;
   /**
+   * 已经因为「借到会员」重装过的曲目。
+   *
+   * 每首只试一次：提供方本来就没有这个档位的权限时，重装只会换回另一条试听地址，
+   * 白白重新缓冲一次。退房时随房间一起清空。
+   */
+  const sharedReloaded = new Set<string>();
+  /**
    * 拿到手的共享地址，键为 `${platform}:${trackKey}`。
    *
    * 只放内存、不持久化：地址有寿命（实测网易云 25 分钟），存下来的多半已经失效。
@@ -291,9 +298,16 @@ export const useRoomStore = defineStore('room', () => {
       return;
     }
     player.setPersistencePaused(true);
-    player.setRoomEndedHook(() => {
-      const key = playback.value?.track?.key;
-      if (key) void act('ended', { trackKey: key });
+    player.setRoomEndedHook((endedKey) => {
+      /*
+       * 只报「刚播完的这首正好是房间当前曲目」的情况。
+       *
+       * 本机切歌比房间广播慢一点（借对方会员时还要先请求地址），两边在曲尾附近会
+       * 重叠：房间已经切到下一首，本机旧歌这才播完。此时若拿房间的当前 key 去上报，
+       * 服务端会把刚切到的这首也当「播完」再跳一次——听感就是 VIP 歌莫名其妙被跳过。
+       */
+      if (playback.value?.track?.key !== endedKey) return;
+      void act('ended', { trackKey: endedKey });
     });
     startTick();
   }
@@ -317,6 +331,7 @@ export const useRoomStore = defineStore('room', () => {
     togetherSyncedAt = 0;
     // 共享地址与「已提示过」标记都跟着房间走：下一个房间不该复用上一个的直链。
     sharedSources.clear();
+    sharedReloaded.clear();
     sharedMissingNotified = false;
     entitlement.value = emptyEntitlement();
     if (restore) restorePersonal();
@@ -552,6 +567,36 @@ export const useRoomStore = defineStore('room', () => {
         syncing = false;
       }
       return;
+    }
+
+    /*
+     * 同一首却只拿到试听片段，而房间已经开了会员共享：重新装一次。
+     *
+     * 授权常常是在歌已经开始放之后才到账的（对方刚点确认、快照刚同步到这里），
+     * 那一次解析只能拿到自己账号的试听；重开播放器后共享地址缓存也是空的，
+     * 若不重装就会把 30 秒片段一直放到底，听感就是 VIP 歌被跳过。
+     * 每首只试一次（见 sharedReloaded），避免提供方本就没权限时反复重装。
+     */
+    if (player.trial && track.sources.length > 0) {
+      const platform = platformOf(track);
+      if (platform && borrowsFrom(platform) && !sharedReloaded.has(track.key)) {
+        sharedReloaded.add(track.key);
+        syncing = true;
+        try {
+          const source = await fetchSharedSource(track);
+          // 只有拿到完整音源才重装：拿到的还是试听（对方自己也没权限）时重装也不会更好。
+          if (source && source.trial !== true && seatActive.value) {
+            const list = queue.value.map(toUnified);
+            await player.playTrack(toUnified(track), list.length > 0 ? list : [toUnified(track)]);
+            const at = livePosition(state);
+            if (at > 0.5) player.seek(at);
+            if (!state.playing) player.pause();
+          }
+        } finally {
+          syncing = false;
+        }
+        return;
+      }
     }
 
     const expected = livePosition(state);

@@ -13,6 +13,7 @@ import {
 } from '@/api/types';
 import { offlineApi } from '@/api/offline';
 import { useToast } from '@/composables/useToast';
+import { cachedImage } from '@/utils/cacheImage';
 import { QUALITY_ORDER } from '@/utils/track';
 import { useOfflineStore } from './offline';
 
@@ -119,7 +120,7 @@ export const usePlayerStore = defineStore('player', () => {
    * 房间里「下一首放什么」由服务端权威决定（顺序/循环/单曲/随机都在房间的 mode 里），
    * 本机自行切歌只会和房间状态打架。
    */
-  let roomEndedHook: (() => void) | null = null;
+  let roomEndedHook: ((endedKey: string) => void) | null = null;
   /**
    * 一起听会员共享：房间把「用对方会员解析出来的地址」从这里递进来。
    *
@@ -309,7 +310,9 @@ export const usePlayerStore = defineStore('player', () => {
       title: track.title,
       artist: track.artists.map((item) => item.name).join(' / '),
       album: track.album.name,
-      artwork: track.album.cover ? [{ src: track.album.cover, sizes: '300x300' }] : [],
+      artwork: track.album.cover
+        ? [{ src: cachedImage(track.album.cover), sizes: '300x300' }]
+        : [],
     });
     updatePositionState();
   }
@@ -351,11 +354,19 @@ export const usePlayerStore = defineStore('player', () => {
       /*
        * 房间里「播完往哪走」由服务端定（房间的 mode）：本机只上报，不自己切歌。
        * 用 0ms 定时器挪出 audio 事件栈——上报是请求，不该在事件回调里同步跑。
+       *
+       * 上报的必须是**本机刚播完的这一首**（`current` 此刻还没变）：房间可能已经
+       * 先一步切到下一首了，若拿去和房间的当前曲目比对，就会把新切到的那首也报成
+       * 「播完」，服务端随即多跳一首——借对方会员时地址要先请求，本机总是慢半拍，
+       * 这个多跳几乎每首都会撞上。
        */
       if (roomEndedHook) {
         playing.value = false;
-        const hook = roomEndedHook;
-        window.setTimeout(() => hook(), 0);
+        const endedKey = current.value?.key ?? null;
+        if (endedKey) {
+          const hook = roomEndedHook;
+          window.setTimeout(() => hook(endedKey), 0);
+        }
         return;
       }
       if (repeat.value === 'one') {
@@ -446,6 +457,96 @@ export const usePlayerStore = defineStore('player', () => {
       lyricLoading.value = false;
     }
   }
+
+  /**
+   * 已补全过的单曲详情，按 `platform:id` 缓存。
+   *
+   * 「一起听」的房间快照每次变化都会把队列整个重建一遍，补全会被反复问到；有了缓存
+   * 才不会为同一首歌反复发请求。
+   */
+  const metadataCache = new Map<string, UnifiedTrack>();
+
+  /**
+   * 补全歌手 / 专辑的跳转坐标（`id` + `platform`），以及**音质档位清单与各档体积**。
+   *
+   * 房间里的曲目是服务端清洗过的摘要，只留下歌手名与专辑名；照它重建出来的曲目没有
+   * 坐标，全屏播放页里的歌手与专辑就退化成不可点的纯文字，音质面板也拿不到 `qualitySizes`
+   * （收藏、历史里按文本存的歌一样）。网易云的搜索/歌单结果还只带基础档，高级档与体积
+   * 都要单曲详情才知道（`qualitiesComplete: false` 就是它的信号）。
+   *
+   * 这里在播放时按需拉一次单曲详情，只补不覆盖，失败也不影响播放。
+   */
+  async function enrichMetadata(track: UnifiedTrack): Promise<void> {
+    const source = track.sources[0];
+    if (!source) return;
+    const needArtists = track.artists.some((item) => !item.id || !item.platform);
+    const needAlbum = !track.album.id || !track.album.platform;
+    const needQualities = track.qualitiesComplete !== true;
+    if (!needArtists && !needAlbum && !needQualities) return;
+
+    const cacheKey = `${source.platform}:${source.id}`;
+    let detail = metadataCache.get(cacheKey);
+    if (!detail) {
+      try {
+        detail = (await musicApi.track(source.platform, source.id)).track;
+        if (metadataCache.size > 200) metadataCache.clear();
+        metadataCache.set(cacheKey, detail);
+      } catch {
+        return; // 补全失败无关紧要，静默忽略
+      }
+    }
+
+    /*
+     * 期间可能切了歌、或房间快照重建了队列：先认当前下标（同一首歌在队列里可能出现
+     * 多次，按 key 找会补到前面那条、界面上这条依然不可点），下标对不上再按 key 找。
+     */
+    const atPosition = queue.value[index.value];
+    const target =
+      atPosition?.key === track.key
+        ? atPosition
+        : queue.value.find((item) => item.key === track.key);
+    if (!target) return;
+    /*
+     * 详情里的坐标按理自带 platform；偶尔上游只给 id 时，用取流用的那个平台兜底
+     * （歌手/专辑 ID 本来就是该平台体系内的），否则仍是「有 id 却拼不出跳转」。
+     */
+    if (needArtists && detail.artists.some((item) => item.id)) {
+      target.artists = detail.artists.map((item) => ({
+        ...item,
+        platform: item.platform ?? source.platform,
+      }));
+    }
+    if (needAlbum && detail.album.id) {
+      target.album = {
+        ...target.album,
+        id: detail.album.id,
+        platform: detail.album.platform ?? source.platform,
+      };
+    }
+    /*
+     * 档位与体积同源：面板里「xxM · 规格」那行读的就是 qualitySizes。
+     * 详情没给体积时留下列表里已有的那份，别把「知道」抹成「不知道」。
+     */
+    if (needQualities && detail.qualities) {
+      target.qualities = detail.qualities;
+      target.qualitySizes = detail.qualitySizes ?? target.qualitySizes;
+      // 标成完整，免得后面每次队列重建都再补一遍。
+      target.qualitiesComplete = true;
+    }
+  }
+
+  /*
+   * 房间/跟随会整队重建（成员或队列一变就来一帧），所以不能只在起播时补一次：
+   * 盯着「当前曲目」，重建之后也自动补回来。补全改的是曲目对象的属性，`current`
+   * 依赖的是队列下标与对象引用，改属性不会反过来触发这个 watch，不会形成循环。
+   */
+  watch(
+    current,
+    (track) => {
+      if (track) void enrichMetadata(track);
+    },
+    { immediate: true },
+  );
 
   async function start(): Promise<void> {
     const track = current.value;
@@ -756,8 +857,8 @@ export const usePlayerStore = defineStore('player', () => {
     if (!paused) persist();
   }
 
-  /** 把「自然播完」交给房间（传 `null` 收回）。 */
-  function setRoomEndedHook(hook: (() => void) | null): void {
+  /** 把「自然播完」交给房间（传 `null` 收回）；参数是本机刚播完那首的 key。 */
+  function setRoomEndedHook(hook: ((endedKey: string) => void) | null): void {
     roomEndedHook = hook;
   }
 

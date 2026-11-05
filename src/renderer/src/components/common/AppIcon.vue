@@ -61,7 +61,12 @@ const ICONS: Record<string, string[]> = {
   mute: ['M11 5 6 9H3v6h3l5 4z', 'M23 9l-6 6', 'M17 9l6 6'],
   heart: ['M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z'],
   list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
-  lyrics: ['M4 6h16', 'M4 12h10', 'M4 18h7', 'M17 14a3 3 0 1 0 0 6a3 3 0 0 0 0-6', 'M20 14V7l2-1'],
+  // 桌面歌词：一个音符，和列表里的「设备」图标区分开。
+  note: [
+    'M9 18V5l12-2v13',
+    'M9 18a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
+    'M21 16a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
+  ],
   minimize: ['M6 12h12'],
   maximize: ['M5 5h14v14H5z'],
   restore: ['M8 8h11v11H8z', 'M5 16V5h11'],
@@ -97,6 +102,7 @@ const ICONS: Record<string, string[]> = {
   'arrow-right': ['M5 12h14', 'M13 6l6 6-6 6'],
   plus: ['M12 5v14', 'M5 12h14'],
   'chevron-down': ['M6 9l6 6 6-6'],
+  'chevron-up': ['M6 15l6-6 6 6'],
   'chevron-left': ['M15 5 8 12l7 7'],
   'chevron-right': ['M9 5l7 7-7 7'],
   sparkles: [

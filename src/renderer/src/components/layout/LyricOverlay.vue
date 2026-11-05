@@ -6,6 +6,7 @@ import { usePlayerStore } from '@/stores/player';
 import { useRoomStore } from '@/stores/room';
 import { useUiStore } from '@/stores/ui';
 import { formatTime, platformName } from '@/utils/format';
+import { cachedImage } from '@/utils/cacheImage';
 import { activeLineIndex, parseLyric, type LyricLine } from '@/utils/lyric';
 import QualityPicker from './QualityPicker.vue';
 import QueueButton from './QueueButton.vue';
@@ -54,7 +55,7 @@ const modeIcon = computed(() => {
 });
 
 const track = computed(() => player.current);
-const cover = computed(() => track.value?.album.cover ?? '');
+const cover = computed(() => cachedImage(track.value?.album.cover));
 const title = computed(() => track.value?.title ?? '未在播放');
 /** 歌手/专辑各自成链接：平台信息齐全才跳，和 web 端的判断一致。 */
 const artists = computed(() => track.value?.artists ?? []);

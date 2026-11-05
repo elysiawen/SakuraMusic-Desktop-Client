@@ -3,11 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
 import { useAuthStore } from '@/stores/auth';
+import { useHomeStore } from '@/stores/home';
 import { PALETTES, useThemeStore, type ThemeMode } from '@/stores/theme';
+import { cachedImage } from '@/utils/cacheImage';
 
 const isMac = window.sakura.platform === 'darwin';
 const theme = useThemeStore();
 const auth = useAuthStore();
+const home = useHomeStore();
 const route = useRoute();
 const router = useRouter();
 
@@ -28,11 +31,16 @@ function focusSearchInput(): void {
 }
 
 const nickname = computed(() => auth.user?.nickname || auth.user?.username || '未登录');
-const avatar = computed(() => auth.user?.avatar ?? '');
+const avatar = computed(() => cachedImage(auth.user?.avatar));
 const initial = computed(() => nickname.value.trim().slice(0, 1) || 'S');
 
 function goBack(): void {
   router.back();
+}
+
+/** 主页推荐只拉一次，想换一批就点搜索框右边这个刷新。 */
+function refreshHome(): void {
+  void home.load(true);
 }
 
 /**
@@ -142,6 +150,19 @@ onBeforeUnmount(() => {
           <AppIcon name="close" :size="12" />
         </button>
       </form>
+
+      <!-- 主页推荐刷新：只在主页出现，点一下换一批推荐。 -->
+      <button
+        v-if="route.name === 'home'"
+        class="nav-button"
+        type="button"
+        title="刷新推荐"
+        aria-label="刷新推荐"
+        :disabled="home.loading"
+        @click="refreshHome"
+      >
+        <AppIcon name="refresh" :size="15" :class="{ spinning: home.loading }" />
+      </button>
     </div>
 
     <div class="titlebar-actions no-drag">
@@ -279,6 +300,21 @@ onBeforeUnmount(() => {
 .nav-button:hover {
   background: var(--surface-hover);
   color: var(--text);
+}
+
+.nav-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.spinning {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* 网易云那种搜索框：圆角矩形（不是胶囊），默认淡底、聚焦才浮出边线。 */

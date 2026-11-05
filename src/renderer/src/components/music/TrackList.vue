@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
+import TrackMoreMenu from './TrackMoreMenu.vue';
 import type { UnifiedTrack } from '@/api/types';
 import { useToast } from '@/composables/useToast';
+import { useTransport } from '@/composables/useTransport';
 import { useLibraryStore } from '@/stores/library';
-import { useOfflineStore } from '@/stores/offline';
 import { usePlayerStore } from '@/stores/player';
+import { cachedImage } from '@/utils/cacheImage';
 import { formatTime, platformName } from '@/utils/format';
 import { trackQualityLabel } from '@/utils/track';
 
@@ -15,9 +17,11 @@ const props = withDefaults(
     title?: string;
     emptyText?: string;
     showCover?: boolean;
-    /** 歌单详情里用「移除」，其它地方用「下一首播放」。 */
+    /** 本地歌单详情：更多菜单里额外给一项「从歌单移除」。 */
     removable?: boolean;
     showFavorite?: boolean;
+    /** 外层自己画标题栏时关掉组件自带的「N 首 / 播放全部」。 */
+    showHead?: boolean;
   }>(),
   {
     title: '曲目',
@@ -25,99 +29,108 @@ const props = withDefaults(
     showCover: true,
     removable: false,
     showFavorite: true,
+    showHead: true,
   },
 );
 
 const emit = defineEmits<{ remove: [track: UnifiedTrack] }>();
 
 const player = usePlayerStore();
+const transport = useTransport();
 const library = useLibraryStore();
-const offline = useOfflineStore();
 const toast = useToast();
 
 const currentKey = computed(() => player.current?.key ?? '');
 
-/** 行内「更多」菜单：下一首播放、加入歌单。同一时刻只开一个。 */
-const menuKey = ref<string | null>(null);
-const menuTrack = ref<UnifiedTrack | null>(null);
+/**
+ * 「更多」菜单：点行尾三点或在行上右键都能开，同一个列表同时只开一个。
+ * 浮层挂在 body 下（见 TrackMoreMenu），这里只记曲目与落点；id 每次打开都变，
+ * 保证组件重新挂载、二级菜单不会带着上一次的展开状态。
+ */
+interface MenuState {
+  id: number;
+  track: UnifiedTrack;
+  x: number;
+  y: number;
+}
 
-function toggleMenu(track: UnifiedTrack): void {
-  if (menuKey.value === track.key) {
-    menuKey.value = null;
+const menu = ref<MenuState | null>(null);
+let menuSeq = 0;
+const MENU_WIDTH = 200;
+const MENU_GAP = 6;
+
+function openMenu(track: UnifiedTrack, x: number, y: number): void {
+  menu.value = { id: ++menuSeq, track, x, y };
+}
+
+/** 点三点：贴着按钮下方、右边缘对齐；再点同一行就收起。 */
+function openFromButton(track: UnifiedTrack, event: MouseEvent): void {
+  if (menu.value?.track.key === track.key) {
+    menu.value = null;
     return;
   }
-  menuKey.value = track.key;
-  menuTrack.value = track;
-  if (library.playlists.length === 0) void library.loadPlaylists().catch(() => undefined);
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  openMenu(track, rect.right - MENU_WIDTH, rect.bottom + MENU_GAP);
+}
+
+/** 右键：菜单直接落在鼠标位置。 */
+function openFromContext(track: UnifiedTrack, event: MouseEvent): void {
+  openMenu(track, event.clientX, event.clientY);
+}
+
+function closeMenu(): void {
+  menu.value = null;
+}
+
+function onMenuRemove(track: UnifiedTrack): void {
+  closeMenu();
+  emit('remove', track);
 }
 
 function onDocumentPointerDown(event: PointerEvent): void {
-  if (!menuKey.value) return;
-  const target = event.target as HTMLElement | null;
-  if (target?.closest('.row-menu, .menu-trigger')) return;
-  menuKey.value = null;
+  if (!menu.value) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest('.track-more-menu, .menu-trigger')) return;
+  menu.value = null;
 }
 
-async function addToPlaylist(id: string, name: string): Promise<void> {
-  const track = menuTrack.value;
-  if (!track) return;
-  try {
-    const added = await library.addToPlaylist(id, track);
-    toast.success(added ? `已加入「${name}」` : `「${name}」里已经有这首了`);
-    menuKey.value = null;
-  } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : '加入歌单失败');
-  }
+/** Esc 只收菜单：捕获阶段拦下，别让全屏歌词页跟着一起关掉。 */
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape' || !menu.value) return;
+  event.stopImmediatePropagation();
+  menu.value = null;
 }
 
-function playNextFromMenu(track: UnifiedTrack): void {
-  player.playNext(track);
-  menuKey.value = null;
-}
-
-async function downloadFromMenu(track: UnifiedTrack): Promise<void> {
-  menuKey.value = null;
-  try {
-    await offline.download(track, player.quality);
-    toast.success(`「${track.title}」已下载到本地`);
-  } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : '下载失败');
-  }
-}
-
-function downloadLabel(track: UnifiedTrack): string {
-  if (offline.isDownloading(track.key)) {
-    const percent = offline.percentOf(track.key);
-    return percent > 0 ? `下载中… ${percent}%` : '下载中…';
-  }
-  return offline.has(track.key) ? '重新下载' : '下载到本地';
-}
-
-async function removeDownload(track: UnifiedTrack): Promise<void> {
-  menuKey.value = null;
-  try {
-    await offline.remove(track.key);
-    toast.info('已删除本地文件');
-  } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : '删除失败');
-  }
+/** 页面滚动 / 窗口缩放后 fixed 菜单的落点就过期了，直接收起；菜单内部滚动不算。 */
+function onViewportChange(event: Event): void {
+  if (!menu.value) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest('.track-more-menu')) return;
+  menu.value = null;
 }
 
 onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointerDown);
+  window.addEventListener('keydown', onKeydown, true);
+  document.addEventListener('scroll', onViewportChange, true);
+  window.addEventListener('resize', onViewportChange);
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown);
+  window.removeEventListener('keydown', onKeydown, true);
+  document.removeEventListener('scroll', onViewportChange, true);
+  window.removeEventListener('resize', onViewportChange);
 });
 
 function playAt(at: number): void {
-  void player.playQueue(props.tracks, at);
+  const track = props.tracks[at];
+  if (!track) return;
+  transport.playTrack(track, props.tracks);
 }
 
 function playAll(): void {
-  if (props.tracks.length === 0) return;
-  void player.playQueue(props.tracks, 0);
+  transport.playList(props.tracks);
 }
 
 async function toggleFavorite(track: UnifiedTrack): Promise<void> {
@@ -132,7 +145,7 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
 
 <template>
   <section class="track-list">
-    <header v-if="tracks.length > 0" class="list-head">
+    <header v-if="showHead && tracks.length > 0" class="list-head">
       <span class="faint">{{ title }} · {{ tracks.length }} 首</span>
       <button type="button" class="play-all" @click="playAll">
         <AppIcon name="play" :size="12" />
@@ -148,6 +161,7 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
         :key="track.key"
         class="row"
         :class="{ active: currentKey === track.key }"
+        @contextmenu.prevent="openFromContext(track, $event)"
       >
         <!--
           行本身不再是 <button>：歌手、专辑要做成链接，交互元素不能嵌在按钮里
@@ -173,8 +187,11 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
           </span>
 
           <span v-if="showCover" class="row-cover">
-            <img v-if="track.album.cover" :src="track.album.cover" alt="" loading="lazy" />
+            <img v-if="track.album.cover" :src="cachedImage(track.album.cover)" alt="" loading="lazy" />
             <AppIcon v-else name="music" :size="15" :stroke-width="1.5" />
+            <span class="cover-hover" aria-hidden="true">
+              <AppIcon name="play" :size="16" filled />
+            </span>
           </span>
 
           <span class="row-meta">
@@ -221,6 +238,7 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
           <span class="row-time">{{ formatTime(track.durationMs / 1000) }}</span>
         </div>
 
+        <!-- 所有列表的行尾都是同一套：收藏 + 三点更多；移除、加入歌单等都收在菜单里。 -->
         <span class="row-actions">
           <button
             v-if="showFavorite"
@@ -235,67 +253,31 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
           </button>
 
           <button
-            v-if="removable"
-            type="button"
-            class="btn-icon row-action danger"
-            title="从歌单移除"
-            aria-label="从歌单移除"
-            @click.stop="emit('remove', track)"
-          >
-            <AppIcon name="close" :size="14" />
-          </button>
-
-          <button
-            v-else
             type="button"
             class="btn-icon row-action menu-trigger"
-            title="更多操作"
+            title="更多操作（也可以在曲目上右键）"
             aria-label="更多操作"
-            @click.stop="toggleMenu(track)"
+            @click.stop="openFromButton(track, $event)"
           >
-            <AppIcon name="plus" :size="14" />
-          </button>
-        </span>
-
-        <span v-if="menuKey === track.key" class="row-menu">
-          <button type="button" class="menu-item" @click.stop="playNextFromMenu(track)">
-            <AppIcon name="next" :size="13" />
-            下一首播放
-          </button>
-
-          <button
-            type="button"
-            class="menu-item"
-            :disabled="offline.isDownloading(track.key)"
-            @click.stop="downloadFromMenu(track)"
-          >
-            <AppIcon name="download" :size="13" />
-            {{ downloadLabel(track) }}
-          </button>
-
-          <button
-            v-if="offline.has(track.key)"
-            type="button"
-            class="menu-item danger"
-            @click.stop="removeDownload(track)"
-          >
-            <AppIcon name="close" :size="13" />
-            删除本地下载
-          </button>
-          <p v-if="library.playlists.length === 0" class="menu-empty">还没有本地歌单</p>
-          <button
-            v-for="item in library.playlists"
-            :key="item.id"
-            type="button"
-            class="menu-item"
-            @click.stop="addToPlaylist(item.id, item.name)"
-          >
-            <AppIcon name="plus" :size="13" />
-            <span class="menu-name">{{ item.name }}</span>
+            <AppIcon name="more" :size="16" />
           </button>
         </span>
       </li>
     </ul>
+
+    <!-- 菜单挂到 body：列表容器有 overflow / z-index，留在行里会被裁掉或盖住。 -->
+    <Teleport to="body">
+      <TrackMoreMenu
+        v-if="menu"
+        :key="menu.id"
+        :track="menu.track"
+        :x="menu.x"
+        :y="menu.y"
+        :removable="removable"
+        @close="closeMenu"
+        @remove="onMenuRemove"
+      />
+    </Teleport>
   </section>
 </template>
 
@@ -404,6 +386,7 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
 }
 
 .row-cover {
+  position: relative;
   display: grid;
   width: 40px;
   height: 40px;
@@ -535,68 +518,6 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
 
 .row-action.faved {
   color: var(--accent);
-}
-
-.row-action.danger:hover {
-  color: #e0453a;
-}
-
-.row-menu {
-  position: absolute;
-  top: calc(100% - 4px);
-  right: 40px;
-  z-index: var(--z-overlay);
-  display: flex;
-  width: 190px;
-  max-height: 240px;
-  flex-direction: column;
-  gap: 1px;
-  padding: 6px;
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-md);
-}
-
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 9px;
-  border-radius: var(--radius-xs);
-  color: var(--text-muted);
-  font-size: 11px;
-  text-align: left;
-  transition:
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-
-.menu-item:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
-.menu-item:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.menu-item.danger {
-  color: #e0453a;
-}
-
-.menu-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.menu-empty {
-  padding: 8px 9px;
-  color: var(--text-faint);
-  font-size: 10px;
 }
 
 @media (max-width: 1080px) {

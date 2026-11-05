@@ -6,6 +6,7 @@ import PageState from '@/components/common/PageState.vue';
 import TrackList from '@/components/music/TrackList.vue';
 import { musicApi } from '@/api';
 import type { ArtistDetail, Platform, UnifiedAlbum } from '@/api/types';
+import { cachedImage } from '@/utils/cacheImage';
 import { parsePlatform, platformName } from '@/utils/format';
 
 const route = useRoute();
@@ -49,7 +50,7 @@ function openAlbum(album: UnifiedAlbum): void {
     <template v-if="!loading && !error && detail">
       <header class="hero">
         <div class="avatar">
-          <img v-if="detail.artist.avatar" :src="detail.artist.avatar" alt="" />
+          <img v-if="detail.artist.avatar" :src="cachedImage(detail.artist.avatar)" alt="" />
           <AppIcon v-else name="users" :size="34" :stroke-width="1.3" />
         </div>
         <div class="hero-copy">
@@ -85,7 +86,7 @@ function openAlbum(album: UnifiedAlbum): void {
             @click="openAlbum(album)"
           >
             <span class="album-cover">
-              <img v-if="album.cover" :src="album.cover" alt="" loading="lazy" />
+              <img v-if="album.cover" :src="cachedImage(album.cover)" alt="" loading="lazy" />
               <AppIcon v-else name="disc" :size="22" :stroke-width="1.4" />
             </span>
             <strong :title="album.name">{{ album.name }}</strong>

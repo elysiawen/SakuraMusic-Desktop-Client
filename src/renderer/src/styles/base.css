@@ -277,6 +277,30 @@ img {
   box-shadow: var(--shadow-lg);
 }
 
+/*
+ * 曲目封面的悬停遮罩（与 web 端 TrackList 一致）：中性黑半透明 +
+ * 居中白色播放三角，只在鼠标落到封面本身时淡入，不是 hover 整行。
+ *
+ * 遮罩必须用中性黑：带主题色相的话，换配色后封面会残留粉紫。
+ * 用 .row-cover 作为触发器，搜索页与歌单/专辑页共用的 TrackList 都能命中。
+ */
+.cover-hover {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.42);
+  opacity: 0;
+  /* 只是视觉提示，点击仍落到封面所在的行（播放整行）。 */
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.row-cover:hover .cover-hover {
+  opacity: 1;
+}
+
 .chip {
   display: inline-flex;
   align-items: center;

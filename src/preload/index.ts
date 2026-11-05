@@ -1,9 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { CacheKind, CacheStats } from '@shared/cache';
 import type {
   AppInfo,
   DesktopApi,
   DesktopConfig,
   DesktopConfigPatch,
+  DesktopLyricState,
+  TaskbarPreviewCommand,
+  TaskbarPreviewImage,
   PlatformCredentialState,
   PlatformKey,
   SaveServerInput,
@@ -41,6 +45,53 @@ const api: DesktopApi = {
     clear: (platform: PlatformKey): Promise<PlatformCredentialState> =>
       ipcRenderer.invoke('platform-cred:clear', platform),
     clearAll: (): Promise<PlatformCredentialState> => ipcRenderer.invoke('platform-cred:clear-all'),
+  },
+
+  cache: {
+    stats: (): Promise<CacheStats> => ipcRenderer.invoke('cache:stats'),
+    clear: (kind?: CacheKind): Promise<CacheStats> => ipcRenderer.invoke('cache:clear', kind),
+  },
+
+  lyric: {
+    pushState: (state: DesktopLyricState): void => {
+      ipcRenderer.send('lyric:push', state);
+    },
+    getState: (): Promise<DesktopLyricState | null> => ipcRenderer.invoke('lyric:get-state'),
+    onState: (callback: (state: DesktopLyricState) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: DesktopLyricState): void =>
+        callback(state);
+      ipcRenderer.on('lyric:state', listener);
+      return () => {
+        ipcRenderer.removeListener('lyric:state', listener);
+      };
+    },
+    onPrefs: (callback: (config: DesktopConfig) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, config: DesktopConfig): void =>
+        callback(config);
+      ipcRenderer.on('lyric:prefs', listener);
+      return () => {
+        ipcRenderer.removeListener('lyric:prefs', listener);
+      };
+    },
+  },
+
+  taskbarPreview: {
+    push: (image: TaskbarPreviewImage): void => {
+      ipcRenderer.send('taskbar-preview:push', image);
+    },
+    onCommand: (callback: (command: TaskbarPreviewCommand) => void): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        command: TaskbarPreviewCommand,
+      ): void => callback(command);
+      ipcRenderer.on('taskbar-preview:command', listener);
+      return () => {
+        ipcRenderer.removeListener('taskbar-preview:command', listener);
+      };
+    },
+    ack: (line: string): void => {
+      ipcRenderer.send('taskbar-preview:ack', line);
+    },
   },
 
   windowControls: {

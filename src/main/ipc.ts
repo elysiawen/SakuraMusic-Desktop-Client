@@ -1,12 +1,15 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import { CACHE_KINDS, type CacheKind, type CacheStats } from '@shared/cache';
 import type {
   AppInfo,
   DesktopConfig,
   DesktopConfigPatch,
+  DesktopLyricState,
   PlatformCredentialState,
   PlatformKey,
   SaveServerInput,
   ServerProbeResult,
+  TaskbarPreviewImage,
 } from '@shared/ipc';
 import { clearSessionCookie } from './auth/cookieVault';
 import {
@@ -15,12 +18,17 @@ import {
   listLocalPlatforms,
   savePlatformCredential,
 } from './auth/platformVault';
+import { clearCache, getCacheStats, trimCache } from './cache/index';
 import { clearServer, getConfig, saveConfig, saveServer } from './config/store';
 import { normalizeBaseUrl } from './config/url';
+import { getLyricState, pushLyricState } from './lyric';
+import { logTaskbarPreview, setTaskbarPreviewImage } from './windows/taskbarPreview';
 import { probeServer } from './bff/gateway';
 
 interface IpcContext {
   getMainWindow: () => BrowserWindow | null;
+  /** 配置写盘后调用：同步歌词窗口、刷新托盘、广播 lyric:prefs。 */
+  onConfigChanged?: (config: DesktopConfig) => void;
 }
 
 function windowOf(event: IpcMainInvokeEvent): BrowserWindow | null {
@@ -54,8 +62,68 @@ export function registerIpc(context: IpcContext): void {
 
   ipcMain.handle('config:update', (_event, patch: DesktopConfigPatch): DesktopConfig => {
     // 只允许改偏好字段；服务器地址必须走 saveServer，避免绕过换服务器时的清理逻辑。
-    const { deviceName, closeToTray, cacheLimitMb, downloadDir } = patch ?? {};
-    return saveConfig({ deviceName, closeToTray, cacheLimitMb, downloadDir });
+    const {
+      deviceName,
+      closeToTray,
+      audioCacheMb,
+      coverCacheMb,
+      lyricCacheDays,
+      metaCacheDays,
+      downloadDir,
+      desktopLyric,
+      lyricLocked,
+      lyricFontSize,
+      lyricColor,
+      lyricShowTrans,
+      taskbarPreview,
+    } = patch ?? {};
+    const next = saveConfig({
+      deviceName,
+      closeToTray,
+      audioCacheMb,
+      coverCacheMb,
+      lyricCacheDays,
+      metaCacheDays,
+      downloadDir,
+      desktopLyric,
+      lyricLocked,
+      lyricFontSize,
+      lyricColor,
+      lyricShowTrans,
+      taskbarPreview,
+    });
+    // 额度调小后立刻按 LRU 压回去，设置页的占用统计也会随之下降。
+    trimCache('audio');
+    trimCache('cover');
+    context.onConfigChanged?.(next);
+    return next;
+  });
+
+  // 主窗口推播放快照 → 缓存一帧并转发给歌词窗口。
+  ipcMain.on('lyric:push', (_event, state: DesktopLyricState): void => {
+    if (!state || typeof state !== 'object') return;
+    pushLyricState(state);
+  });
+
+  ipcMain.handle('lyric:get-state', (): DesktopLyricState | null => getLyricState());
+
+  // 主窗口画好的任务栏预览卡片与按钮图标 → 主进程（仅 Windows 使用）。
+  ipcMain.on('taskbar-preview:push', (_event, image: TaskbarPreviewImage): void => {
+    if (!image || typeof image !== 'object') return;
+    setTaskbarPreviewImage(image);
+  });
+
+  // 真机链路诊断：渲染端回报命令执行情况，和主进程写进同一份日志。
+  ipcMain.on('taskbar-preview:ack', (_event, line: unknown): void => {
+    if (typeof line === 'string') logTaskbarPreview(`RENDERER ${line}`);
+  });
+
+  ipcMain.handle('cache:stats', (): CacheStats => getCacheStats());
+
+  ipcMain.handle('cache:clear', (_event, kind?: unknown): CacheStats => {
+    if (kind === undefined) clearCache();
+    else if (CACHE_KINDS.includes(kind as CacheKind)) clearCache(kind as CacheKind);
+    return getCacheStats();
   });
 
   ipcMain.handle('dialog:choose-directory', async (event): Promise<string | null> => {
@@ -148,7 +216,4 @@ export function registerIpc(context: IpcContext): void {
   ipcMain.handle('shell:show-item', (_event, path: string): void => {
     if (path) shell.showItemInFolder(path);
   });
-
-  // 保留主窗口引用，避免将来托盘/深链接需要时再改 IPC 注册顺序。
-  void context;
 }

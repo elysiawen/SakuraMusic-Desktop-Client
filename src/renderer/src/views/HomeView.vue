@@ -1,19 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted } from 'vue';
+import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
-import type { AppInfo } from '@shared/ipc';
 import AppIcon from '@/components/common/AppIcon.vue';
 import PageState from '@/components/common/PageState.vue';
-import { musicApi } from '@/api';
 import type {
-  DiscoverFeed,
   DiscoverSection,
   Platform,
   PlaylistSummary,
   UnifiedTrack,
 } from '@/api/types';
+import { useTransport } from '@/composables/useTransport';
+import { useHomeStore } from '@/stores/home';
 import { usePlayerStore } from '@/stores/player';
-import { usePreferencesStore } from '@/stores/preferences';
+import { cachedImage } from '@/utils/cacheImage';
 import { platformName } from '@/utils/format';
 import { isTrack } from '@/utils/track';
 
@@ -28,20 +28,12 @@ interface FeedSection {
 }
 
 const player = usePlayerStore();
-const preferences = usePreferencesStore();
+const transport = useTransport();
+const home = useHomeStore();
 const router = useRouter();
 
-const appInfo = ref<AppInfo | null>(null);
-const feed = ref<DiscoverFeed | null>(null);
-const loading = ref(false);
-const error = ref('');
-
-const platformLabel = computed(() => {
-  if (appInfo.value?.platform === 'darwin') return 'macOS';
-  if (appInfo.value?.platform === 'win32') return 'Windows';
-  if (appInfo.value?.platform === 'linux') return 'Linux';
-  return appInfo.value?.platform ?? '';
-});
+// 推荐流缓存在 store 里：进出主页不重新请求，只有点「刷新」才强拉。
+const { feed, loading, error } = storeToRefs(home);
 
 const sections = computed<FeedSection[]>(() =>
   (feed.value?.sections ?? []).map((section) => ({
@@ -56,7 +48,21 @@ const sections = computed<FeedSection[]>(() =>
 );
 
 const feedErrors = computed(() => feed.value?.errors ?? []);
-const isEmpty = computed(() => !loading.value && !error.value && sections.value.length === 0);
+
+/** 跟 web 端一致：歌曲类板块走横向轨道，歌单/榜单走卡片网格，不要混在一起平铺。 */
+const trackSections = computed(() =>
+  sections.value.filter((section) => section.kind === 'tracks' && section.tracks.length > 0),
+);
+const collectionSections = computed(() =>
+  sections.value.filter((section) => section.kind !== 'tracks' && section.collections.length > 0),
+);
+const isEmpty = computed(
+  () =>
+    !loading.value &&
+    !error.value &&
+    trackSections.value.length === 0 &&
+    collectionSections.value.length === 0,
+);
 
 const kindLabel: Record<DiscoverSection['kind'], string> = {
   tracks: '推荐歌曲',
@@ -64,18 +70,9 @@ const kindLabel: Record<DiscoverSection['kind'], string> = {
   toplists: '榜单',
 };
 
-async function load(): Promise<void> {
-  loading.value = true;
-  error.value = '';
-  try {
-    await preferences.ensureInitialized();
-    feed.value = await musicApi.discoverFeed(preferences.enabledParam('discover'));
-  } catch (caught) {
-    feed.value = null;
-    error.value = caught instanceof Error ? caught.message : '加载推荐失败';
-  } finally {
-    loading.value = false;
-  }
+/** 手动刷新：强制重拉推荐流。 */
+function refresh(): void {
+  void home.load(true);
 }
 
 function artistNames(track: UnifiedTrack): string {
@@ -83,12 +80,13 @@ function artistNames(track: UnifiedTrack): string {
 }
 
 function playAt(section: FeedSection, at: number): void {
-  void player.playQueue(section.tracks, at);
+  const track = section.tracks[at];
+  if (!track) return;
+  transport.playTrack(track, section.tracks);
 }
 
 function playSection(section: FeedSection): void {
-  if (section.tracks.length === 0) return;
-  void player.playQueue(section.tracks, 0);
+  transport.playList(section.tracks);
 }
 
 function openCollection(section: FeedSection, item: PlaylistSummary): void {
@@ -103,12 +101,8 @@ function goSearch(): void {
 }
 
 onMounted(async () => {
-  try {
-    appInfo.value = await window.sakura.getAppInfo();
-  } catch {
-    appInfo.value = null;
-  }
-  await load();
+  // 已拉过就直接复用缓存，返回主页不再重拉。
+  await home.load();
 });
 </script>
 
@@ -121,7 +115,7 @@ onMounted(async () => {
       </span>
     </div>
 
-    <PageState :loading="loading" :error="error" text="正在向两个平台要推荐…" @retry="load" />
+    <PageState :loading="loading" :error="error" text="正在向两个平台要推荐…" @retry="refresh" />
 
     <section v-if="isEmpty" class="empty-feed">
       <span class="empty-disc"><AppIcon name="music" :size="26" :stroke-width="1.3" /></span>
@@ -131,36 +125,32 @@ onMounted(async () => {
     </section>
 
     <template v-if="!loading && !error">
-      <section v-for="section in sections" :key="section.key" class="section">
+      <!-- 歌曲类板块（每日推荐、私人 FM 等）走横向轨道，避免几十张卡把整页铺满 -->
+      <section v-for="section in trackSections" :key="section.key" class="section">
         <header class="section-head">
           <div>
             <p class="eyebrow">{{ platformName(section.platform) }} · {{ kindLabel[section.kind] }}</p>
             <h2>{{ section.title }}</h2>
             <p v-if="section.subtitle" class="subtitle">{{ section.subtitle }}</p>
           </div>
-          <button
-            v-if="section.tracks.length > 0"
-            type="button"
-            class="play-all"
-            @click="playSection(section)"
-          >
+          <button type="button" class="play-all" @click="playSection(section)">
             <AppIcon name="play" :size="12" />
             播放全部
           </button>
         </header>
 
-        <div v-if="section.tracks.length > 0" class="track-grid">
+        <div class="rail">
           <button
             v-for="(track, at) in section.tracks"
             :key="track.key"
             type="button"
-            class="track-card"
+            class="track-card rail-card"
             :class="{ active: player.current?.key === track.key }"
             :title="`播放 ${track.title}`"
             @click="playAt(section, at)"
           >
             <span class="card-cover">
-              <img v-if="track.album.cover" :src="track.album.cover" alt="" loading="lazy" />
+              <img v-if="track.album.cover" :src="cachedImage(track.album.cover)" alt="" loading="lazy" />
               <AppIcon v-else name="music" :size="22" :stroke-width="1.4" />
               <span class="play-badge"><AppIcon name="play" :size="11" /></span>
             </span>
@@ -168,8 +158,19 @@ onMounted(async () => {
             <small :title="artistNames(track)">{{ artistNames(track) }}</small>
           </button>
         </div>
+      </section>
 
-        <div v-else class="collection-grid">
+      <!-- 歌单 / 榜单：卡片网格 -->
+      <section v-for="section in collectionSections" :key="section.key" class="section">
+        <header class="section-head">
+          <div>
+            <p class="eyebrow">{{ platformName(section.platform) }} · {{ kindLabel[section.kind] }}</p>
+            <h2>{{ section.title }}</h2>
+            <p v-if="section.subtitle" class="subtitle">{{ section.subtitle }}</p>
+          </div>
+        </header>
+
+        <div class="collection-grid">
           <button
             v-for="item in section.collections"
             :key="`${item.platform}-${item.id}`"
@@ -178,7 +179,7 @@ onMounted(async () => {
             @click="openCollection(section, item)"
           >
             <span class="card-cover">
-              <img v-if="item.cover" :src="item.cover" alt="" loading="lazy" />
+              <img v-if="item.cover" :src="cachedImage(item.cover)" alt="" loading="lazy" />
               <AppIcon v-else name="list" :size="20" :stroke-width="1.4" />
             </span>
             <strong :title="item.title">{{ item.title }}</strong>
@@ -190,13 +191,6 @@ onMounted(async () => {
       </section>
     </template>
 
-    <footer class="home-footer">
-      <span>Sakura Music Desktop {{ appInfo?.version ?? '0.1.0' }}</span>
-      <span class="dot" />
-      <span>{{ platformLabel }} {{ appInfo?.arch ?? '' }}</span>
-      <span class="dot" />
-      <span>Electron {{ appInfo?.electron ?? '' }}</span>
-    </footer>
   </div>
 </template>
 
@@ -292,10 +286,18 @@ onMounted(async () => {
   filter: brightness(1.06);
 }
 
-.track-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+.rail {
+  display: flex;
   gap: 14px;
+  padding: 2px 4px 10px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scroll-snap-type: x proximity;
+}
+
+.rail-card {
+  flex: 0 0 168px;
+  scroll-snap-align: start;
 }
 
 .collection-grid {
@@ -434,22 +436,6 @@ onMounted(async () => {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.7;
-}
-
-.home-footer {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 6px 2px 0;
-  color: var(--text-faint);
-  font-size: 10px;
-}
-
-.dot {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--text-faint);
 }
 
 </style>

@@ -6,6 +6,7 @@ import PageState from '@/components/common/PageState.vue';
 import TrackList from '@/components/music/TrackList.vue';
 import { musicApi } from '@/api';
 import type { AlbumDetail, ArtistRef, Platform } from '@/api/types';
+import { cachedImage } from '@/utils/cacheImage';
 import { parsePlatform, platformName } from '@/utils/format';
 
 const route = useRoute();
@@ -47,7 +48,7 @@ function openArtist(artist: ArtistRef): void {
     <template v-if="!loading && !error && detail">
       <header class="hero">
         <div class="cover">
-          <img v-if="detail.album.cover" :src="detail.album.cover" alt="" />
+          <img v-if="detail.album.cover" :src="cachedImage(detail.album.cover)" alt="" />
           <AppIcon v-else name="disc" :size="38" :stroke-width="1.3" />
         </div>
 

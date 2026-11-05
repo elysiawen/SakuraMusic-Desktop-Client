@@ -2,9 +2,11 @@
 import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
+import { useDesktopLyric } from '@/composables/useDesktopLyric';
 import { usePlayerStore } from '@/stores/player';
 import { useRoomStore } from '@/stores/room';
 import { useUiStore } from '@/stores/ui';
+import { cachedImage } from '@/utils/cacheImage';
 import { formatTime, platformName } from '@/utils/format';
 import QualityPicker from './QualityPicker.vue';
 import QueueButton from './QueueButton.vue';
@@ -14,6 +16,7 @@ const room = useRoomStore();
 const ui = useUiStore();
 const route = useRoute();
 const router = useRouter();
+const desktopLyric = useDesktopLyric();
 
 /**
  * 房间里「播放」归服务端管：本机占着席位时，传输控制要提交给房间，
@@ -25,7 +28,7 @@ const roomSeat = computed(() => room.seatActive);
 const seekDraft = ref<number | null>(null);
 
 const track = computed(() => player.current);
-const cover = computed(() => track.value?.album.cover ?? '');
+const cover = computed(() => cachedImage(track.value?.album.cover));
 const title = computed(() => track.value?.title ?? '未在播放');
 const subtitle = computed(() => {
   if (!track.value) return '搜索一首歌开始';
@@ -85,11 +88,6 @@ function openLyrics(): void {
   ui.openLyrics();
 }
 
-function openTogether(): void {
-  void router.push('/together');
-}
-
-/** 设备（遥控）：从侧边栏挪到播放条上，跟「一起听」并排。 */
 function openDevices(): void {
   void router.push('/devices');
 }
@@ -101,11 +99,17 @@ function openDevices(): void {
       <!-- 左侧：当前歌曲 -->
       <div class="player-left">
         <template v-if="track">
-          <!-- 点封面打开歌词，和 web 端的手感一致 -->
-          <button class="cover-button" type="button" title="打开歌词" @click="openLyrics">
+          <!--
+            点封面展开歌词页，和 web 端一致：hover 时封面压一层中性黑遮罩，
+            中间浮出上箭头，暗示「往上展开」。
+          -->
+          <button class="cover-button" type="button" title="展开歌词页" @click="openLyrics">
             <span class="cover">
               <img v-if="cover" :src="cover" alt="" />
               <AppIcon v-else name="music" :size="20" :stroke-width="1.5" />
+            </span>
+            <span class="cover-button-hint" aria-hidden="true">
+              <AppIcon name="chevron-up" :size="16" />
             </span>
           </button>
           <div class="now-meta">
@@ -231,17 +235,6 @@ function openDevices(): void {
 
         <QualityPicker />
 
-        <button
-          type="button"
-          class="btn-icon"
-          :class="{ 'is-active': room.active }"
-          aria-label="一起听"
-          title="一起听"
-          @click="openTogether"
-        >
-          <AppIcon name="users" :size="17" />
-        </button>
-
         <!-- 原来的全屏歌词按钮换成设备：歌词仍可点左侧封面或按 L 打开 -->
         <button
           type="button"
@@ -252,6 +245,17 @@ function openDevices(): void {
           @click="openDevices"
         >
           <AppIcon name="monitor" :size="17" />
+        </button>
+
+        <button
+          type="button"
+          class="btn-icon"
+          :class="{ 'is-active': desktopLyric.enabled.value }"
+          aria-label="桌面歌词"
+          title="桌面歌词"
+          @click="desktopLyric.toggle"
+        >
+          <AppIcon name="note" :size="17" />
         </button>
 
         <!-- 队列放在最右：向上弹出的浮层（右侧常驻面板已经取消） -->
@@ -301,12 +305,30 @@ function openDevices(): void {
   position: relative;
   display: block;
   flex: none;
+  overflow: hidden;
   border-radius: 12px;
+  line-height: 0;
   transition: transform var(--dur) var(--ease);
 }
 
 .cover-button:hover {
-  transform: scale(1.03);
+  transform: translateY(-2px);
+}
+
+/* 同 web 端：只盖封面这一小块，中性黑不带主题色相，换配色也不会发脏。 */
+.cover-button-hint {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.cover-button:hover .cover-button-hint {
+  opacity: 1;
 }
 
 .cover {

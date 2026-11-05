@@ -13,7 +13,6 @@ import type { Quality, UnifiedTrack } from '@/api/types';
 export const useOfflineStore = defineStore('offline', () => {
   const items = ref<OfflineItem[]>([]);
   const usedBytes = ref(0);
-  const limitBytes = ref(2 * 1024 * 1024 * 1024);
   const loading = ref(false);
   const error = ref('');
   /** 按 track.key 记正在下载的曲目，避免重复点击。 */
@@ -25,8 +24,6 @@ export const useOfflineStore = defineStore('offline', () => {
   const byKey = computed(() => new Map(items.value.map((item) => [item.key, item])));
 
   const usedText = computed(() => formatBytes(usedBytes.value));
-  const limitText = computed(() => formatBytes(limitBytes.value));
-  const overflow = computed(() => usedBytes.value > limitBytes.value);
 
   function formatBytes(bytes: number): string {
     if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
@@ -81,7 +78,6 @@ export const useOfflineStore = defineStore('offline', () => {
       const state = await offlineApi.list();
       items.value = state.items;
       usedBytes.value = state.usedBytes;
-      limitBytes.value = state.limitBytes;
     } catch (caught) {
       error.value = caught instanceof Error ? caught.message : '读取本地下载失败';
     } finally {
@@ -136,22 +132,9 @@ export const useOfflineStore = defineStore('offline', () => {
     usedBytes.value = 0;
   }
 
-  /** 重新读一次上限（设置里改过缓存上限后调用）。 */
-  async function refreshLimit(): Promise<void> {
-    try {
-      const state = await offlineApi.list();
-      usedBytes.value = state.usedBytes;
-      limitBytes.value = state.limitBytes;
-      items.value = state.items;
-    } catch {
-      // 上限只是展示用，读不到不影响下载。
-    }
-  }
-
   return {
     items,
     usedBytes,
-    limitBytes,
     loading,
     error,
     downloading,
@@ -160,8 +143,6 @@ export const useOfflineStore = defineStore('offline', () => {
     keys,
     byKey,
     usedText,
-    limitText,
-    overflow,
     formatBytes,
     has,
     itemOf,
@@ -174,6 +155,5 @@ export const useOfflineStore = defineStore('offline', () => {
     download,
     remove,
     clear,
-    refreshLimit,
   };
 });

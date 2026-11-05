@@ -3,15 +3,23 @@ import type { URL } from 'node:url';
 import { MAX_API_BODY } from '@shared/constants';
 import { captureSetCookie, clearSessionCookie, hasSessionCookie } from '../auth/cookieVault';
 import { platformCredentialHeader } from '../auth/platformVault';
+import {
+  apiCacheKind,
+  readResponseCache,
+  readStaleResponseCache,
+  responseCacheKey,
+  writeResponseCache,
+} from '../cache/index';
 import { getConfig } from '../config/store';
 import {
   GatewayError,
   openGatewayStream,
   requestGatewayJson,
   type GatewayClientOptions,
+  type GatewayJsonResponse,
 } from './gateway';
-import { proxyAudioStream, registerMedia } from './media';
-import { errorPayload, sendJson } from './respond';
+import { proxyAudioStream, registerMedia, rememberStreamCacheKey } from './media';
+import { errorPayload, sendJson, sendRawJson } from './respond';
 
 /**
  * `/api/*` 反代。
@@ -148,15 +156,19 @@ function rewritePlayResolve(upstreamBody: Buffer, requestBody: Buffer | undefine
 
     if (!result?.url || !request.platform || !request.id) return upstreamBody;
 
+    const quality = result.actualQuality ?? request.quality ?? 'high';
     const mediaId = registerMedia({
       platform: request.platform,
       trackId: request.id,
-      quality: result.actualQuality ?? request.quality ?? 'high',
+      quality,
       proxyPath: result.url,
       direct: result.direct
         ? { url: result.direct.url, headers: result.direct.headers ?? {} }
         : undefined,
     });
+    // 渲染进程若选中「中转」，播放走 `/api/stream?t=...`；令牌不可反解，
+    // 在这里把代理地址和稳定缓存键绑起来。
+    rememberStreamCacheKey(result.url, request.platform, request.id, quality);
 
     return Buffer.from(
       JSON.stringify({
@@ -231,6 +243,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, url: 
   const path = `${url.pathname}${url.search}`;
   const method = (req.method ?? 'GET').toUpperCase();
 
+  // 只缓存「歌词 + 歌曲/专辑/歌手详情」的 GET 响应，和安卓端保持一致。
+  const cacheKind = method === 'GET' ? apiCacheKind(url.pathname) : null;
+  const cacheKey = cacheKind ? responseCacheKey(url.pathname, url.search) : null;
+
   try {
     if (url.pathname === '/api/connect/events') {
       await proxySse(client, path, req, res);
@@ -241,6 +257,14 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, url: 
     if (url.pathname === '/api/stream') {
       await proxyAudioStream(req, res, url);
       return;
+    }
+
+    if (cacheKind && cacheKey) {
+      const cached = readResponseCache(cacheKind, cacheKey);
+      if (cached !== null) {
+        sendRawJson(res, 200, cached);
+        return;
+      }
     }
 
     const body = method === 'GET' || method === 'HEAD' ? undefined : await readBody(req);
@@ -255,18 +279,43 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, url: 
     const credential = platformCredentialHeader();
     if (credential) headers['X-Sakura-Credential'] = credential;
 
-    const upstream = await requestGatewayJson(client, path, {
-      method,
-      body,
-      headers,
-      timeoutMs: 20000,
-    });
+    let upstream: GatewayJsonResponse;
+    try {
+      upstream = await requestGatewayJson(client, path, {
+        method,
+        body,
+        headers,
+        timeoutMs: 20000,
+      });
+    } catch (error) {
+      // 网关不可达时先回退旧缓存，让歌词/详情在断网时还能显示。
+      if (
+        cacheKind &&
+        cacheKey &&
+        error instanceof GatewayError &&
+        (error.code === 'network' || error.code === 'timeout')
+      ) {
+        const stale = readStaleResponseCache(cacheKind, cacheKey);
+        if (stale !== null) {
+          sendRawJson(res, 200, stale);
+          return;
+        }
+      }
+      throw error;
+    }
 
     captureSetCookie(upstream.headers['set-cookie']);
 
     // 会话失效时清掉本地令牌；登录/注册的 401 是「密码不对」，不能当成会话过期。
     if (upstream.status === 401 && hasSessionCookie() && !AUTH_PATHS.has(url.pathname)) {
       clearSessionCookie();
+    }
+
+    if (cacheKind && cacheKey && upstream.status === 200) {
+      const upstreamType = String(upstream.headers['content-type'] ?? '');
+      if (!upstreamType || upstreamType.includes('json')) {
+        writeResponseCache(cacheKind, cacheKey, upstream.body.toString('utf8'));
+      }
     }
 
     const responseBody =

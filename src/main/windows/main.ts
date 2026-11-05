@@ -2,6 +2,7 @@ import { BrowserWindow, shell } from 'electron';
 import { join } from 'node:path';
 // 窗口/任务栏图标与安装包图标同源，都取自 build/icon.png。
 import appIcon from '../../../build/icon.png?asset';
+import { applyRoundedRegion, needsRoundedRegion } from './rounded';
 
 interface CreateMainWindowOptions {
   bffUrl: string;
@@ -28,7 +29,15 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
           titleBarStyle: 'hiddenInset' as const,
           trafficLightPosition: { x: 18, y: 16 },
         }
-      : { frame: false }),
+      : {
+          frame: false,
+          /*
+           * 圆角：Win11 走 DWM（roundedCorners）；Win10 没有这套接口，
+           * 用 SetWindowRgn 裁（见 ./rounded）——动画都能保住，
+           * transparent 窗口那条路会把 DWM 动画全弄丢，不走。
+           */
+          roundedCorners: true,
+        }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -44,6 +53,9 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
   window.once('ready-to-show', () => {
     window.show();
   });
+
+  // Windows 10：SetWindowRgn 裁圆角（Win11 已由 DWM 画好，不用管）。
+  if (needsRoundedRegion()) applyRoundedRegion(window);
 
   const sendMaximized = (value: boolean): void => {
     if (!window.isDestroyed()) window.webContents.send('window:maximized', value);

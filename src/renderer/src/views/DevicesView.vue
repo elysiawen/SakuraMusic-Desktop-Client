@@ -6,6 +6,7 @@ import { useDevicesStore } from '@/stores/devices';
 import { usePlayerStore } from '@/stores/player';
 import { useRoomStore } from '@/stores/room';
 import { useToast } from '@/composables/useToast';
+import { cachedImage } from '@/utils/cacheImage';
 import { formatTime } from '@/utils/format';
 
 /**
@@ -88,7 +89,7 @@ const seating = ref(false);
 /* ---------------- 卡片上的曲目信息 ---------------- */
 
 function coverOf(device: RemoteDevice): string {
-  return device.state?.track?.cover ?? '';
+  return cachedImage(device.state?.track?.cover);
 }
 
 function trackTitle(device: RemoteDevice): string {
@@ -1042,7 +1043,7 @@ onBeforeUnmount(() => {
                   @click="playRemoteAt(i)"
                 >
                   <span class="queue-cover">
-                    <img v-if="track.cover" :src="track.cover" alt="" loading="lazy" />
+                    <img v-if="track.cover" :src="cachedImage(track.cover)" alt="" loading="lazy" />
                     <AppIcon v-else name="music" :size="15" :stroke-width="1.5" />
                     <span v-if="i === floatQueue.index" class="queue-eq" aria-hidden="true">
                       <i /><i /><i />

@@ -26,6 +26,21 @@ export const router = createRouter({
       children: [
         { path: '', name: 'home', component: () => import('@/views/HomeView.vue') },
         {
+          path: 'favorites',
+          name: 'favorites',
+          component: () => import('@/views/FavoritesView.vue'),
+        },
+        {
+          path: 'history',
+          name: 'history',
+          component: () => import('@/views/HistoryView.vue'),
+        },
+        {
+          path: 'downloads',
+          name: 'downloads',
+          component: () => import('@/views/DownloadsView.vue'),
+        },
+        {
           path: 'search',
           name: 'search',
           component: () => import('@/views/SearchView.vue'),

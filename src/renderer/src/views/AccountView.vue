@@ -7,6 +7,7 @@ import type { Platform } from '@/api/types';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { useLibraryStore } from '@/stores/library';
+import { cachedImage } from '@/utils/cacheImage';
 import { platformName } from '@/utils/format';
 
 /**
@@ -164,7 +165,7 @@ async function logout(): Promise<void> {
       <div class="panel">
         <div class="profile">
           <span class="avatar">
-            <img v-if="auth.user?.avatar" :src="auth.user.avatar" alt="" />
+            <img v-if="auth.user?.avatar" :src="cachedImage(auth.user.avatar)" alt="" />
             <template v-else>{{ initial }}</template>
           </span>
 
@@ -229,7 +230,7 @@ async function logout(): Promise<void> {
           <span class="platform-avatar">
             <img
               v-if="credentialOf(platform)?.profile?.avatar"
-              :src="credentialOf(platform)?.profile?.avatar"
+              :src="cachedImage(credentialOf(platform)?.profile?.avatar)"
               alt=""
             />
             <AppIcon v-else :name="platform === 'netease' ? 'music' : 'disc'" :size="19" />

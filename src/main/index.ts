@@ -1,10 +1,22 @@
-import { app, BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow, dialog, Menu, Tray } from 'electron';
 import { join } from 'node:path';
 import { APP_ID, APP_NAME } from '@shared/constants';
+import type { DesktopConfig, DesktopConfigPatch } from '@shared/ipc';
+// 托盘图标与窗口/安装包图标同源。
+import appIcon from '../../build/icon.png?asset';
 import { startBff, type BffHandle } from './bff/server';
+import { cleanupTempFiles } from './cache/index';
+import { getConfig, saveConfig } from './config/store';
+import { closeDesktopLyric, initDesktopLyric, syncDesktopLyric } from './lyric';
 import { installMenu } from './menu';
 import { registerIpc } from './ipc';
 import { createMainWindow } from './windows/main';
+import {
+  disposeTaskbarPreview,
+  initTaskbarPreview,
+  logTaskbarPreview,
+  syncTaskbarPreview,
+} from './windows/taskbarPreview';
 
 // 一起听/房间镜像需要不经过用户手势也能起播。
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -15,28 +27,118 @@ if (!hasLock) {
   app.quit();
 } else {
   let mainWindow: BrowserWindow | null = null;
+  let tray: Tray | null = null;
   let bff: BffHandle | null = null;
   let quitting = false;
 
-  app.on('second-instance', () => {
+  const showMainWindow = (): void => {
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
+  };
+
+  app.on('second-instance', () => {
+    showMainWindow();
   });
+
+  /** 配置变了之后的统一收尾：同步歌词窗口、刷新托盘、广播给所有窗口。 */
+  const applyConfigChanged = (config: DesktopConfig): void => {
+    syncDesktopLyric(config);
+    syncTaskbarPreview(config);
+    refreshTray();
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('lyric:prefs', config);
+    }
+  };
+
+  const applyPatch = (patch: DesktopConfigPatch): void => {
+    applyConfigChanged(saveConfig(patch));
+  };
+
+  function refreshTray(): void {
+    if (!tray) return;
+    const config = getConfig();
+    const taskbarPreviewItem: Electron.MenuItemConstructorOptions = {
+      label: '任务栏预览',
+      type: 'checkbox',
+      checked: config.taskbarPreview,
+      click: (item) => applyPatch({ taskbarPreview: item.checked }),
+    };
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: '显示主界面', click: showMainWindow },
+        { type: 'separator' },
+        {
+          label: '桌面歌词',
+          type: 'checkbox',
+          checked: config.desktopLyric,
+          click: (item) => applyPatch({ desktopLyric: item.checked }),
+        },
+        {
+          // 锁定后鼠标穿透，这是穿透状态下唯一的解锁入口之一。
+          label: '锁定歌词',
+          type: 'checkbox',
+          enabled: config.desktopLyric,
+          checked: config.lyricLocked,
+          click: (item) => applyPatch({ lyricLocked: item.checked }),
+        },
+        ...(process.platform === 'win32' ? [taskbarPreviewItem] : []),
+        { type: 'separator' },
+        {
+          label: '退出',
+          // before-quit 会置 quitting 并关闭 BFF，这里只触发退出流程。
+          click: () => app.quit(),
+        },
+      ]),
+    );
+  }
+
+  const ensureTray = (): void => {
+    // macOS 遵循平台习惯：关窗不退出，靠 Dock/activate 重开，不做托盘。
+    if (tray || process.platform === 'darwin') return;
+    tray = new Tray(appIcon);
+    tray.setToolTip(APP_NAME);
+    refreshTray();
+    tray.on('click', showMainWindow);
+  };
 
   const openMainWindow = (): void => {
     if (!bff) return;
     mainWindow = createMainWindow({ bffUrl: bff.url, secret: bff.secret });
-    mainWindow.on('closed', () => {
-      mainWindow = null;
+    // 任务栏缩略图预览：仅 Windows 生效，非 Windows 内部直接返回。
+    initTaskbarPreview(mainWindow, {
+      enabled: getConfig().taskbarPreview,
+      onCommand: (command) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          logTaskbarPreview(`SEND ${command}`);
+          mainWindow.webContents.send('taskbar-preview:command', command);
+        } else {
+          logTaskbarPreview(`SEND skipped ${command}`);
+        }
+      },
     });
+    mainWindow.on('close', (event) => {
+      // 「关闭窗口时收进托盘」：拦截关闭，只隐藏窗口，播放/下载不中断。
+      if (quitting || process.platform === 'darwin') return;
+      if (!getConfig().closeToTray) return;
+      event.preventDefault();
+      mainWindow?.hide();
+    });
+    mainWindow.on('closed', () => {
+      disposeTaskbarPreview();
+      mainWindow = null;
+      // 不收托盘的模式下关窗即退出：把歌词窗口一起带走，window-all-closed 才会触发。
+      if (!quitting && !getConfig().closeToTray) closeDesktopLyric();
+    });
+    ensureTray();
   };
 
   app.whenReady().then(async () => {
     app.setAppUserModelId(APP_ID);
+    cleanupTempFiles();
     installMenu();
-    registerIpc({ getMainWindow: () => mainWindow });
+    registerIpc({ getMainWindow: () => mainWindow, onConfigChanged: applyConfigChanged });
 
     try {
       bff = await startBff({
@@ -60,8 +162,13 @@ if (!hasLock) {
 
     openMainWindow();
 
+    // 桌面歌词：跟上次开关状态恢复；主窗口收进托盘后歌词继续显示。
+    initDesktopLyric({ bffUrl: bff.url, secret: bff.secret });
+    syncDesktopLyric(getConfig());
+
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) openMainWindow();
+      // 歌词窗口不算数：Dock 点一下要把主窗口找回来。
+      if (!mainWindow) openMainWindow();
     });
   });
 

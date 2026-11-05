@@ -3,6 +3,8 @@ import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
 import SakuraPetals from '@/components/common/SakuraPetals.vue';
+import BareTitleBar from '@/components/layout/BareTitleBar.vue';
+import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
 
@@ -12,6 +14,7 @@ const auth = useAuthStore();
 const theme = useThemeStore();
 const route = useRoute();
 const router = useRouter();
+const toast = useToast();
 
 const tab = ref<AuthTab>('login');
 const username = ref('');
@@ -19,7 +22,6 @@ const password = ref('');
 const nickname = ref('');
 const showPassword = ref(false);
 const submitting = ref(false);
-const errorMessage = ref('');
 
 const canSubmit = computed(
   () => username.value.trim().length >= 3 && password.value.length >= 8 && !submitting.value,
@@ -34,13 +36,11 @@ const lede = computed(() =>
 
 function switchTab(next: AuthTab): void {
   tab.value = next;
-  errorMessage.value = '';
 }
 
 async function submit(): Promise<void> {
   if (!canSubmit.value) return;
   submitting.value = true;
-  errorMessage.value = '';
 
   try {
     if (tab.value === 'login') {
@@ -55,7 +55,7 @@ async function submit(): Promise<void> {
         : '/';
     await router.replace(target);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '操作失败，请稍后重试';
+    toast.error(error instanceof Error ? error.message : '操作失败，请稍后重试');
   } finally {
     submitting.value = false;
   }
@@ -70,16 +70,10 @@ async function changeServer(): Promise<void> {
 <template>
   <div class="auth-page">
     <SakuraPetals v-if="theme.petals" />
+    <BareTitleBar :label="tab === 'login' ? '登录' : '注册'" />
 
     <div class="auth-layout">
       <section class="brand-panel">
-        <div class="brand-lockup">
-          <span class="logo">
-            <AppIcon name="sparkles" :size="20" :stroke-width="2" />
-          </span>
-          <span class="brand-name">Sakura Music</span>
-        </div>
-
         <h1>{{ headline }}</h1>
         <p class="lede">{{ lede }}</p>
 
@@ -171,11 +165,6 @@ async function changeServer(): Promise<void> {
             </div>
           </div>
 
-          <div v-if="errorMessage" class="form-error">
-            <AppIcon name="alert" :size="15" />
-            <span>{{ errorMessage }}</span>
-          </div>
-
           <button type="submit" class="btn btn-primary submit" :disabled="!canSubmit">
             <AppIcon v-if="!submitting" :name="tab === 'login' ? 'arrow-right' : 'plus'" :size="15" />
             <AppIcon v-else name="refresh" :size="15" class="spin" />
@@ -211,7 +200,8 @@ async function changeServer(): Promise<void> {
   align-items: center;
   justify-content: center;
   overflow-y: auto;
-  padding: 44px;
+  /* 顶栏浮在页面顶部，内容整体下移一条标题栏的高度。 */
+  padding: calc(44px + var(--titlebar-h)) 44px 44px;
 }
 
 .auth-layout {
@@ -232,31 +222,9 @@ async function changeServer(): Promise<void> {
   align-items: flex-start;
 }
 
-.brand-lockup {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.logo {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border-radius: 12px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: var(--accent-contrast);
-  box-shadow: 0 12px 28px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-.brand-name {
-  font-size: 16px;
-  font-weight: 800;
-}
-
-/* 里程碑小标签已去掉，原来靠它撑开的那段留白挪到标题上。 */
+/* 品牌行已由顶栏统一承担，标题不必再为它留白。 */
 .brand-panel h1 {
-  margin-top: 40px;
+  margin-top: 0;
   font-size: clamp(38px, 4.8vw, 56px);
   font-weight: 850;
   letter-spacing: -0.04em;
@@ -385,19 +353,6 @@ async function changeServer(): Promise<void> {
 .password-toggle:hover {
   background: var(--surface-hover);
   color: var(--text-muted);
-}
-
-.form-error {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .submit {

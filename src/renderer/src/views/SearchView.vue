@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
+import TrackList from '@/components/music/TrackList.vue';
 import { musicApi } from '@/api';
 import type {
   PlatformStatus,
@@ -12,12 +13,10 @@ import type {
   UnifiedArtist,
 } from '@/api/types';
 import { useToast } from '@/composables/useToast';
-import { usePlayerStore } from '@/stores/player';
 import { usePreferencesStore } from '@/stores/preferences';
-import { formatTime, platformName } from '@/utils/format';
-import { trackQualityLabel } from '@/utils/track';
+import { cachedImage } from '@/utils/cacheImage';
+import { platformName } from '@/utils/format';
 
-const player = usePlayerStore();
 const preferences = usePreferencesStore();
 const toast = useToast();
 const router = useRouter();
@@ -120,10 +119,6 @@ function chooseType(next: SearchType): void {
   if (keyword.value.trim()) void run();
 }
 
-function playAt(at: number): void {
-  void player.playQueue(tracks.value, at);
-}
-
 function openArtist(artist: UnifiedArtist): void {
   const source = artist.sources[0];
   if (!source) return;
@@ -218,82 +213,10 @@ onBeforeUnmount(() => {
       </p>
     </section>
 
-    <ul v-else-if="type === 'song'" class="results">
-      <li
-        v-for="(track, at) in tracks"
-        :key="track.key"
-        class="row"
-        :class="{ active: player.current?.key === track.key }"
-      >
-        <!-- 歌手、专辑要做成链接，所以行本身改成 role=button 的 div（按钮里不能嵌链接） -->
-        <div
-          class="row-main"
-          role="button"
-          tabindex="0"
-          :title="`播放 ${track.title}`"
-          @click="playAt(at)"
-          @keydown.enter.self="playAt(at)"
-          @keydown.space.self.prevent="playAt(at)"
-        >
-          <span class="row-index">
-            <AppIcon
-              v-if="player.current?.key === track.key && player.playing"
-              name="volume"
-              :size="13"
-            />
-            <template v-else>{{ at + 1 }}</template>
-          </span>
-
-          <span class="row-cover">
-            <img v-if="track.album.cover" :src="track.album.cover" alt="" loading="lazy" />
-            <AppIcon v-else name="music" :size="15" :stroke-width="1.5" />
-          </span>
-
-          <span class="row-meta">
-            <!-- VIP 紧贴歌名，它说的是「这首歌要不要会员」，而不是平台/音质那一类信息 -->
-            <span class="row-title">
-              <strong>{{ track.title }}</strong>
-              <span v-if="track.vip" class="tag vip">VIP</span>
-            </span>
-            <small class="row-artists">
-              <template v-if="track.artists.length === 0">未知歌手</template>
-              <template v-for="(artist, artistIndex) in track.artists" :key="`${artist.name}-${artistIndex}`">
-                <RouterLink
-                  v-if="artist.id && artist.platform"
-                  class="row-link"
-                  :to="{ name: 'artist', params: { platform: artist.platform, id: artist.id } }"
-                  @click.stop
-                >
-                  {{ artist.name }}
-                </RouterLink>
-                <span v-else>{{ artist.name }}</span>
-                <span v-if="artistIndex < track.artists.length - 1"> / </span>
-              </template>
-            </small>
-          </span>
-
-          <RouterLink
-            v-if="track.album.id && track.album.platform"
-            class="row-album row-link"
-            :to="{ name: 'album', params: { platform: track.album.platform, id: track.album.id } }"
-            :title="track.album.name"
-            @click.stop
-          >
-            {{ track.album.name }}
-          </RouterLink>
-          <span v-else class="row-album">{{ track.album.name }}</span>
-
-          <span class="row-tags">
-            <span v-for="source in track.sources" :key="`${source.platform}-${source.id}`" class="tag">
-              {{ platformName(source.platform) }}
-            </span>
-            <span v-if="trackQualityLabel(track)" class="tag">{{ trackQualityLabel(track) }}</span>
-          </span>
-
-          <span class="row-time">{{ formatTime(track.durationMs / 1000) }}</span>
-        </div>
-      </li>
-    </ul>
+    <!-- 与其它列表共用同一套曲目行：更多菜单、收藏、右键操作都不再另写一份。 -->
+    <div v-else-if="type === 'song'" class="results">
+      <TrackList :tracks="tracks" title="搜索结果" />
+    </div>
 
     <div v-else-if="type === 'artist'" class="card-grid">
       <button
@@ -305,7 +228,7 @@ onBeforeUnmount(() => {
         @click="openArtist(artist)"
       >
         <span class="card-cover round">
-          <img v-if="artist.avatar" :src="artist.avatar" alt="" loading="lazy" />
+          <img v-if="artist.avatar" :src="cachedImage(artist.avatar)" alt="" loading="lazy" />
           <AppIcon v-else name="users" :size="24" :stroke-width="1.4" />
         </span>
         <strong :title="artist.name">{{ artist.name }}</strong>
@@ -323,7 +246,7 @@ onBeforeUnmount(() => {
         @click="openAlbum(album)"
       >
         <span class="card-cover">
-          <img v-if="album.cover" :src="album.cover" alt="" loading="lazy" />
+          <img v-if="album.cover" :src="cachedImage(album.cover)" alt="" loading="lazy" />
           <AppIcon v-else name="disc" :size="22" :stroke-width="1.4" />
         </span>
         <strong :title="album.name">{{ album.name }}</strong>
@@ -340,7 +263,7 @@ onBeforeUnmount(() => {
         @click="openPlaylist(item)"
       >
         <span class="card-cover">
-          <img v-if="item.cover" :src="item.cover" alt="" loading="lazy" />
+          <img v-if="item.cover" :src="cachedImage(item.cover)" alt="" loading="lazy" />
           <AppIcon v-else name="list" :size="22" :stroke-width="1.4" />
         </span>
         <strong :title="item.title">{{ item.title }}</strong>
@@ -528,162 +451,9 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* 清掉 ul 默认的缩进，结果列表才和上方的类型切换左对齐。 */
+/* 曲目行由 TrackList 统一渲染，这里只给分页留白。 */
 .results {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
   padding: 0 0 24px;
-  list-style: none;
-}
-
-.row {
-  border-radius: var(--radius-sm);
-  transition: background var(--dur) var(--ease);
-}
-
-.row:hover {
-  background: var(--surface-hover);
-}
-
-.row.active {
-  background: var(--accent-soft);
-}
-
-/* 标签列定宽，否则标签数量不同的行会把专辑列顶得参差不齐。 */
-.row-main {
-  display: grid;
-  width: 100%;
-  grid-template-columns: 28px 40px minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 112px) 42px;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  text-align: left;
-}
-
-.row-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-faint);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.row.active .row-index {
-  color: var(--accent);
-}
-
-.row-cover {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  overflow: hidden;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
-  background: var(--surface);
-  color: var(--text-faint);
-}
-
-.row-cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.row-meta {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  line-height: 1.4;
-}
-
-/* 歌名行：标题占据剩余宽度并截断，VIP 徽标定宽跟在后面 */
-.row-title {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-}
-
-.row-title .tag {
-  flex: none;
-}
-
-.row-meta strong {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row.active .row-meta strong {
-  color: var(--accent);
-}
-
-.row-meta small {
-  overflow: hidden;
-  color: var(--text-faint);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 歌手 / 专辑链接：平时与正文同色，悬停才亮起并加下划线 */
-.row-link {
-  color: inherit;
-  text-decoration: none;
-  transition: color var(--dur-fast) var(--ease);
-}
-
-.row-link:hover {
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.row-album {
-  overflow: hidden;
-  color: var(--text-faint);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row-tags {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  overflow: hidden;
-}
-
-.tag {
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
-  color: var(--text-faint);
-  font-size: 9px;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.tag.vip {
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-  color: var(--accent);
-}
-
-.row-time {
-  color: var(--text-faint);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
 }
 
 .notice {
@@ -749,13 +519,4 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 1080px) {
-  .row-main {
-    grid-template-columns: 24px 40px minmax(0, 1fr) minmax(0, 108px) 42px;
-  }
-
-  .row-album {
-    display: none;
-  }
-}
 </style>

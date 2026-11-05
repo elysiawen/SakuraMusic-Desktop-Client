@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
 import PageState from '@/components/common/PageState.vue';
 import TrackList from '@/components/music/TrackList.vue';
 import { musicApi } from '@/api';
 import type { CollectionDetail, Platform } from '@/api/types';
+import { cachedImage } from '@/utils/cacheImage';
 import { parsePlatform, platformName } from '@/utils/format';
 
 const route = useRoute();
-const router = useRouter();
 
 const platform = computed<Platform>(() => parsePlatform(route.params.platform));
 const collectionId = computed(() => String(route.params.id ?? ''));
@@ -36,20 +36,10 @@ async function load(): Promise<void> {
 }
 
 watch([platform, collectionId, isToplist], load, { immediate: true });
-
-function goBack(): void {
-  if (window.history.length > 1) router.back();
-  else void router.push({ name: 'home' });
-}
 </script>
 
 <template>
   <div class="detail-view">
-    <button type="button" class="back" @click="goBack">
-      <AppIcon name="prev" :size="13" />
-      返回
-    </button>
-
     <PageState
       :loading="loading"
       :error="error"
@@ -60,7 +50,7 @@ function goBack(): void {
     <template v-if="!loading && !error && detail">
       <header class="hero">
         <div class="cover">
-          <img v-if="detail.cover" :src="detail.cover" alt="" />
+          <img v-if="detail.cover" :src="cachedImage(detail.cover)" alt="" />
           <AppIcon v-else name="list" :size="34" :stroke-width="1.3" />
         </div>
 
@@ -92,27 +82,6 @@ function goBack(): void {
   flex-direction: column;
   gap: 22px;
   animation: fade-up var(--dur-slow) var(--ease);
-}
-
-.back {
-  display: inline-flex;
-  width: fit-content;
-  align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  color: var(--text-faint);
-  font-size: 11px;
-  transition:
-    border-color var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-
-.back:hover {
-  border-color: var(--border-strong);
-  color: var(--text);
 }
 
 .hero {

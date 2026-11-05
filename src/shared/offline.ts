@@ -19,7 +19,6 @@ export interface OfflineItem {
 export interface OfflineLibrary {
   items: OfflineItem[];
   usedBytes: number;
-  limitBytes: number;
 }
 
 export interface OfflineDownloadRequest {
@@ -36,8 +35,6 @@ export interface OfflineDownloadRequest {
 
 export interface OfflineDownloadResult {
   item: OfflineItem;
-  /** 下载完成后总量超过上限：文件留着，但界面该提示清理。 */
-  overLimit: boolean;
 }
 
 /** `/offline/stream/<key>`，可直接作为 `<audio>` 的地址。 */

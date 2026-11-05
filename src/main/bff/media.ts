@@ -1,6 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
 import https from 'node:https';
+import {
+  audioCacheKey,
+  createAudioCacheWriter,
+  serveAudioFromCache,
+} from '../cache/audio';
 import { getConfig } from '../config/store';
 import {
   openGatewayStream,
@@ -58,6 +63,53 @@ const entries = new Map<string, MediaEntry>();
 const ENTRY_TTL_MS = 30 * 60 * 1000;
 const MAX_ENTRIES = 200;
 let lastSweep = 0;
+
+/** `/api/stream?t=...` 的令牌无法反解，用一次性的映射把令牌绑到稳定缓存键。 */
+const streamKeys = new Map<string, { key: string; at: number }>();
+const STREAM_KEY_TTL_MS = 20 * 60 * 1000;
+
+function normalizeStreamPath(value: string): string | null {
+  try {
+    const parsed = new URL(value, 'http://127.0.0.1');
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return null;
+  }
+}
+
+function sweepStreamKeys(now: number): void {
+  for (const [path, item] of streamKeys) {
+    if (now - item.at > STREAM_KEY_TTL_MS) streamKeys.delete(path);
+  }
+}
+
+/** `play/resolve` 时记住代理地址对应哪首歌，供 `/api/stream` 命中音频缓存。 */
+export function rememberStreamCacheKey(
+  proxyPath: string,
+  platform: string,
+  trackId: string,
+  quality: string,
+): void {
+  const path = normalizeStreamPath(proxyPath);
+  if (!path || !path.startsWith('/api/stream')) return;
+  const now = Date.now();
+  sweepStreamKeys(now);
+  streamKeys.set(path, {
+    key: audioCacheKey(platform, trackId, quality),
+    at: now,
+  });
+}
+
+function streamCacheKey(url: URL): string | null {
+  const path = `${url.pathname}${url.search}`;
+  const item = streamKeys.get(path);
+  if (!item) return null;
+  if (Date.now() - item.at > STREAM_KEY_TTL_MS) {
+    streamKeys.delete(path);
+    return null;
+  }
+  return item.key;
+}
 
 function sweep(now: number): void {
   if (now - lastSweep < 60_000) return;
@@ -183,12 +235,59 @@ function copyAudioHeaders(
   res.writeHead(status, forwarded);
 }
 
+interface UpstreamCacheInfo {
+  /** 上游这次响应从哪个字节开始（与缓存键无关的绝对偏移）。 */
+  start: number;
+  total: number | null;
+  mime: string;
+}
+
+function headerText(headers: IncomingHttpHeaders, key: string): string | undefined {
+  const value = headers[key];
+  return Array.isArray(value) ? value.join(', ') : value;
+}
+
+/** 从上游响应头推断缓存写入的起点与完整长度。 */
+function upstreamCacheInfo(
+  status: number,
+  headers: IncomingHttpHeaders,
+): UpstreamCacheInfo | null {
+  const mime = headerText(headers, 'content-type') ?? 'audio/mpeg';
+  // 上游偶尔会用 200 返回 HTML/JSON 错误页，别把它当成音频写进缓存。
+  if (/^(text\/|application\/(json|xml))|html/i.test(mime)) return null;
+
+  if (status === 200) {
+    const length = Number(headerText(headers, 'content-length') ?? '');
+    return {
+      start: 0,
+      total: Number.isFinite(length) && length > 0 ? length : null,
+      mime,
+    };
+  }
+
+  if (status !== 206) return null;
+  const match = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(
+    headerText(headers, 'content-range') ?? '',
+  );
+  if (!match) return null;
+
+  const start = Number(match[1]);
+  const total = match[3] === '*' ? null : Number(match[3]);
+  if (!Number.isFinite(start)) return null;
+  return {
+    start,
+    total: total !== null && Number.isFinite(total) ? total : null,
+    mime,
+  };
+}
+
 function pipeAudio(
   req: IncomingMessage,
   res: ServerResponse,
   status: number,
   headers: IncomingHttpHeaders,
   stream: IncomingMessage,
+  cacheKey: string | null,
 ): void {
   copyAudioHeaders(res, headers, status);
   if (req.method === 'HEAD') {
@@ -197,11 +296,30 @@ function pipeAudio(
     return;
   }
 
+  const info = cacheKey ? upstreamCacheInfo(status, headers) : null;
+  const writer =
+    info && cacheKey
+      ? createAudioCacheWriter(cacheKey, info.start, info.total, info.mime)
+      : null;
+  let ended = false;
+
+  if (writer) {
+    stream.on('data', (chunk: Buffer) => writer.write(chunk));
+    stream.once('end', () => {
+      ended = true;
+      writer.finish(info?.total ?? null, info?.mime ?? 'audio/mpeg');
+    });
+    stream.once('error', () => writer.abort());
+  }
+
   stream.on('error', () => {
     if (!res.writableEnded) res.destroy();
   });
   stream.pipe(res);
-  res.on('close', () => stream.destroy());
+  res.on('close', () => {
+    if (!ended) writer?.abort();
+    stream.destroy();
+  });
 }
 
 async function refreshEntry(entry: MediaEntry): Promise<boolean> {
@@ -247,6 +365,7 @@ async function streamEntry(
   res: ServerResponse,
   range: string | undefined,
   retried: boolean,
+  cacheKey: string,
 ): Promise<void> {
   if (entry.direct) {
     let target: URL | null = null;
@@ -260,7 +379,7 @@ async function streamEntry(
       const direct = await openDirect(target, entry.direct.headers, req.method ?? 'GET', range, 3);
       if (direct) {
         entry.lastUsed = Date.now();
-        pipeAudio(req, res, direct.status, direct.headers, direct.stream);
+        pipeAudio(req, res, direct.status, direct.headers, direct.stream, cacheKey);
         return;
       }
     }
@@ -301,7 +420,7 @@ async function streamEntry(
   if (upstream.status === 401 && !retried) {
     upstream.stream.resume();
     if (await refreshEntry(entry)) {
-      await streamEntry(entry, req, res, range, true);
+      await streamEntry(entry, req, res, range, true, cacheKey);
       return;
     }
   }
@@ -319,7 +438,7 @@ async function streamEntry(
   }
 
   entry.lastUsed = Date.now();
-  pipeAudio(req, res, upstream.status, upstream.headers, upstream.stream);
+  pipeAudio(req, res, upstream.status, upstream.headers, upstream.stream, cacheKey);
 }
 
 export function handleMedia(
@@ -341,7 +460,10 @@ export function handleMedia(
   }
 
   const range = typeof req.headers.range === 'string' ? req.headers.range : undefined;
-  void streamEntry(entry, req, res, range, false).catch(() => {
+  const cacheKey = audioCacheKey(entry.platform, entry.trackId, entry.quality);
+  if (serveAudioFromCache(req, res, cacheKey)) return;
+
+  void streamEntry(entry, req, res, range, false, cacheKey).catch(() => {
     if (!res.headersSent) sendJson(res, 502, errorPayload('stream_failed', '音频加载失败'));
     else res.destroy();
   });
@@ -365,6 +487,8 @@ export async function proxyAudioStream(
   };
   const path = `${url.pathname}${url.search}`;
   const range = typeof req.headers.range === 'string' ? req.headers.range : undefined;
+  const cacheKey = streamCacheKey(url);
+  if (cacheKey && serveAudioFromCache(req, res, cacheKey)) return;
 
   let upstream: GatewayStreamResponse;
   try {
@@ -387,5 +511,5 @@ export async function proxyAudioStream(
     return;
   }
 
-  pipeAudio(req, res, upstream.status, upstream.headers, upstream.stream);
+  pipeAudio(req, res, upstream.status, upstream.headers, upstream.stream, cacheKey);
 }

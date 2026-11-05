@@ -2,8 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { EntitlementPlatform } from '@/api/rooms';
 import AppIcon from '@/components/common/AppIcon.vue';
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import { useToast } from '@/composables/useToast';
+import { useAuthStore } from '@/stores/auth';
 import { useRoomStore } from '@/stores/room';
+import { cachedImage } from '@/utils/cacheImage';
 import { formatTime } from '@/utils/format';
 
 /**
@@ -14,15 +17,17 @@ import { formatTime } from '@/utils/format';
  * 全部读 store。
  */
 const room = useRoomStore();
+const auth = useAuthStore();
 const toast = useToast();
 
 const joinCode = ref('');
 const busy = ref(false);
 /** 把播放从另一台设备接回本机时，按钮要有个「进行中」。 */
 const transferring = ref(false);
-/** 结束房间要二次确认（没有通用 confirm 弹窗，就地做一次态）。 */
-const confirmingEnd = ref(false);
-let confirmTimer: number | undefined;
+/** 解散房间影响双方，确认走通用弹窗，不再靠「再点一次」。 */
+const endOpen = ref(false);
+/** 退出房间前先弹窗：把「退出后会发生什么」说清再动手。 */
+const leaveOpen = ref(false);
 
 /** 每秒走一下：时长与进度都要自己动，不能等服务端推。 */
 const tick = ref(0);
@@ -46,7 +51,7 @@ const totalText = computed(() => {
 
 /* ---------------- 曲目展示 ---------------- */
 
-const cover = computed(() => room.currentTrack?.cover ?? '');
+const cover = computed(() => cachedImage(room.currentTrack?.cover));
 const trackTitle = computed(() => room.currentTrack?.title ?? '房间里还没有歌曲');
 const trackArtists = computed(() => room.currentTrack?.artists ?? '从对方的队列开始');
 const trackAlbum = computed(() => room.currentTrack?.album ?? '');
@@ -58,10 +63,14 @@ const roomStateText = computed(() => {
   return room.playing ? '同步播放中' : '已暂停';
 });
 
-/** 邀请链接：桌面端是 hash 路由，带上房间码打开即入房。 */
-const inviteLink = computed(() =>
-  room.code ? `${window.location.origin}${window.location.pathname}#/together?code=${room.code}` : '',
-);
+/**
+ * 邀请链接：给别人在浏览器里打开 web 端用的，所以要指向已配置的服务器（web 端与网关同源），
+ * 而不是桌面端自己的地址——dev 下是 localhost:5173，打包后更是 file://，都没法开。
+ */
+const inviteLink = computed(() => {
+  const base = auth.config?.baseUrl;
+  return base && room.code ? `${base}/together?code=${room.code}` : '';
+});
 
 function initial(nickname: string): string {
   return nickname.trim().slice(0, 1) || '友';
@@ -110,27 +119,32 @@ async function copyInvite(): Promise<void> {
   }
 }
 
-/** 结束房间：双人房里一个人结束，双方都退出。 */
-async function endRoom(): Promise<void> {
-  if (!confirmingEnd.value) {
-    confirmingEnd.value = true;
-    window.clearTimeout(confirmTimer);
-    confirmTimer = window.setTimeout(() => {
-      confirmingEnd.value = false;
-    }, 3000);
-    return;
+/** 结束房间：双人房里一个人结束，双方都退出；先弹窗把后果说清。 */
+function endRoom(): void {
+  endOpen.value = true;
+}
+
+async function confirmEnd(): Promise<void> {
+  try {
+    await run(() => room.dissolve());
+    endOpen.value = false;
+  } catch (error) {
+    // 失败时留着弹窗，方便直接重试；错误也别只丢到控制台。
+    toast.error(error instanceof Error ? error.message : '结束房间失败');
   }
-  confirmingEnd.value = false;
-  window.clearTimeout(confirmTimer);
-  await room.dissolve();
 }
 
 function leaveRoom(): void {
-  void room.leave();
+  leaveOpen.value = true;
 }
 
-function toggle(): void {
-  room.toggle();
+async function confirmLeave(): Promise<void> {
+  try {
+    await run(() => room.leave());
+    leaveOpen.value = false;
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '退出房间失败');
+  }
 }
 
 /** 旁观时把播放接回本机（就是 join 接席位）。 */
@@ -241,26 +255,11 @@ function rejectShare(platform: EntitlementPlatform): void {
 
 /* ---- 进度 ---------------- */
 
-/** 拖动中的临时进度：松手前不让每秒的 tick 把滑块拽回房间位置。 */
-const seekDraft = ref<number | null>(null);
-const shownPosition = computed(() => seekDraft.value ?? position.value);
-
 /** 进度条的填充比例（%）。 */
 const progressPercent = computed(() => {
   const total = duration.value;
-  return total > 0 ? Math.min(100, Math.max(0, (shownPosition.value / total) * 100)) : 0;
+  return total > 0 ? Math.min(100, Math.max(0, (position.value / total) * 100)) : 0;
 });
-
-function onSeekInput(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
-  if (Number.isFinite(value)) seekDraft.value = value;
-}
-
-function onSeekDone(): void {
-  const value = seekDraft.value;
-  seekDraft.value = null;
-  if (value !== null) room.seek(value);
-}
 
 onMounted(() => {
   // 从邀请链接进来：把房间码填好，用户点一下「加入」即可（不自动入房，避免误把席位抢走）。
@@ -275,7 +274,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (tickTimer !== undefined) window.clearInterval(tickTimer);
-  window.clearTimeout(confirmTimer);
 });
 </script>
 
@@ -365,7 +363,7 @@ onBeforeUnmount(() => {
           <section class="pair">
             <div class="side">
               <span class="avatar is-me">
-                <img v-if="room.accountMember?.avatar" :src="room.accountMember.avatar" alt="" />
+                <img v-if="room.accountMember?.avatar" :src="cachedImage(room.accountMember.avatar)" alt="" />
                 <template v-else>{{ initial(room.accountMember?.nickname ?? '我') }}</template>
               </span>
               <strong>{{ room.accountMember?.nickname ?? '我' }}</strong>
@@ -380,7 +378,7 @@ onBeforeUnmount(() => {
             <div class="side">
               <template v-if="room.partner">
                 <span class="avatar partner" :class="{ offline: !partnerOnline }">
-                  <img v-if="room.partner.avatar" :src="room.partner.avatar" alt="" />
+                  <img v-if="room.partner.avatar" :src="cachedImage(room.partner.avatar)" alt="" />
                   <template v-else>{{ initial(room.partner.nickname) }}</template>
                   <span class="online-dot" :class="{ on: partnerOnline }" />
                 </span>
@@ -422,45 +420,23 @@ onBeforeUnmount(() => {
               </span>
             </header>
 
+            <!-- 进度只读：房间进度由服务端说了算，这里只展示，不允许拖动。 -->
             <div class="progress">
-              <span class="time">{{ formatTime(shownPosition) }}</span>
-              <input
-                class="range"
-                type="range"
-                min="0"
-                :max="Math.max(1, Math.floor(duration))"
-                step="1"
-                :value="Math.floor(shownPosition)"
+              <span class="time">{{ formatTime(position) }}</span>
+              <div
+                class="progress-bar"
                 :style="{ '--fill': `${progressPercent}%` }"
-                :disabled="!room.currentTrack || room.spectating"
+                role="progressbar"
                 aria-label="播放进度"
-                @input="onSeekInput"
-                @change="onSeekDone"
+                :aria-valuenow="Math.floor(position)"
+                aria-valuemin="0"
+                :aria-valuemax="Math.max(1, Math.floor(duration))"
               />
               <span class="time">{{ formatTime(duration) }}</span>
             </div>
 
-            <!-- 席位在本机：传输控制交给房间，本机只镜像 -->
-            <div v-if="!room.spectating" class="controls">
-              <button type="button" class="ctrl" aria-label="上一首" title="上一首" @click="room.prev()">
-                <AppIcon name="prev" :size="15" filled />
-              </button>
-              <button
-                type="button"
-                class="ctrl big"
-                :aria-label="room.playing ? '暂停' : '播放'"
-                :title="room.playing ? '暂停' : '播放'"
-                @click="toggle"
-              >
-                <AppIcon :name="room.playing ? 'pause' : 'play'" :size="19" filled />
-              </button>
-              <button type="button" class="ctrl" aria-label="下一首" title="下一首" @click="room.next()">
-                <AppIcon name="next" :size="15" filled />
-              </button>
-            </div>
-
             <!-- 旁观：播放挂在同账号的另一台设备上 -->
-            <div v-else class="spectate-bar">
+            <div v-if="room.spectating" class="spectate-bar">
               <span class="spectate-text">
                 <AppIcon name="monitor" :size="14" />
                 <span class="truncate">
@@ -572,7 +548,7 @@ onBeforeUnmount(() => {
               @click="endRoom"
             >
               <AppIcon name="logout" :size="13" />
-              {{ confirmingEnd ? '再点一次结束' : '结束一起听' }}
+              结束一起听
             </button>
             <button type="button" class="mini wide" @click="leaveRoom">退出房间</button>
           </section>
@@ -606,6 +582,30 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </Teleport>
+
+    <!-- 解散房间：双方都会退出，用统一的确认弹窗而不是就地二次点击。 -->
+    <ConfirmDialog
+      :visible="endOpen"
+      title="结束一起听"
+      message="一个人结束，双方就都退出一起听，各自恢复自己的播放。"
+      confirm-label="结束"
+      danger
+      :busy="busy"
+      @close="endOpen = false"
+      @confirm="confirmEnd"
+    />
+
+    <!-- 退出房间：只影响自己，但同样先确认，避免误触把现场丢掉。 -->
+    <ConfirmDialog
+      :visible="leaveOpen"
+      title="退出一起听"
+      message="退出后你恢复自己的播放，当前同步进度不会保留。房间还留着，对方可以继续听。"
+      confirm-label="退出"
+      danger
+      :busy="busy"
+      @close="leaveOpen = false"
+      @confirm="confirmLeave"
+    />
   </div>
 </template>
 
@@ -1178,13 +1178,11 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
-.range {
+.progress-bar {
   --fill: 0%;
   height: 6px;
   flex: 1;
   min-width: 0;
-  appearance: none;
-  -webkit-appearance: none;
   border-radius: 999px;
   background-image:
     linear-gradient(90deg, var(--accent), var(--accent-2)),
@@ -1193,86 +1191,6 @@ onBeforeUnmount(() => {
   background-size:
     var(--fill) 100%,
     100% 100%;
-  cursor: pointer;
-  outline: none;
-}
-
-.range:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.range::-webkit-slider-thumb {
-  width: 11px;
-  height: 11px;
-  appearance: none;
-  -webkit-appearance: none;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.3),
-    0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
-  opacity: 0;
-  transform: scale(0.6);
-  transition:
-    opacity var(--dur-fast) var(--ease),
-    transform var(--dur-fast) var(--ease);
-}
-
-.range:hover::-webkit-slider-thumb,
-.range:active::-webkit-slider-thumb,
-.range:focus-visible::-webkit-slider-thumb {
-  opacity: 1;
-  transform: none;
-}
-
-/* ---------------- 传输控制 ---------------- */
-
-.controls {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding-top: 2px;
-}
-
-.ctrl {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--surface) 70%, transparent);
-  color: var(--text-muted);
-  transition:
-    border-color var(--dur) var(--ease),
-    color var(--dur) var(--ease),
-    transform var(--dur-fast) var(--ease);
-}
-
-.ctrl:hover {
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-
-.ctrl:active {
-  transform: scale(0.94);
-}
-
-/* 主播放键：整页唯一的大圆按钮。 */
-.ctrl.big {
-  width: 58px;
-  height: 58px;
-  border: none;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: var(--accent-contrast, #fff);
-  box-shadow: 0 16px 30px -16px color-mix(in srgb, var(--accent) 90%, transparent);
-}
-
-.ctrl.big:hover {
-  color: var(--accent-contrast, #fff);
-  filter: brightness(1.05);
 }
 
 /* ---------------- 旁观 ---------------- */

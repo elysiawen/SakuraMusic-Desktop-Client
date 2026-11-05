@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
 import { usePlayerStore } from '@/stores/player';
 import { useRoomStore } from '@/stores/room';
+import { cachedImage } from '@/utils/cacheImage';
 import { formatTime } from '@/utils/format';
 
 /**
@@ -103,7 +104,7 @@ function removeAt(position: number): void {
           </span>
 
           <span class="queue-cover">
-            <img v-if="item.album.cover" :src="item.album.cover" alt="" />
+            <img v-if="item.album.cover" :src="cachedImage(item.album.cover)" alt="" />
             <AppIcon v-else name="music" :size="15" />
           </span>
 

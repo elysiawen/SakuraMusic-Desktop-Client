@@ -6,6 +6,7 @@ import AppSidebar from '@/components/layout/AppSidebar.vue';
 import LyricOverlay from '@/components/layout/LyricOverlay.vue';
 import PlayerBar from '@/components/layout/PlayerBar.vue';
 import TitleBar from '@/components/layout/TitleBar.vue';
+import { useTransport } from '@/composables/useTransport';
 import { useDevicesStore } from '@/stores/devices';
 import { useLibraryStore } from '@/stores/library';
 import { useOfflineStore } from '@/stores/offline';
@@ -17,6 +18,7 @@ import { useUiStore } from '@/stores/ui';
 
 const theme = useThemeStore();
 const player = usePlayerStore();
+const transport = useTransport();
 const library = useLibraryStore();
 const offline = useOfflineStore();
 const devices = useDevicesStore();
@@ -74,15 +76,15 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   switch (event.code) {
     case 'Space':
       event.preventDefault();
-      player.toggle();
+      transport.toggle();
       return;
     case 'ArrowLeft':
       event.preventDefault();
-      player.seek(Math.max(0, player.currentTime - 5));
+      transport.seek(Math.max(0, player.currentTime - 5));
       return;
     case 'ArrowRight':
       event.preventDefault();
-      player.seek(player.currentTime + 5);
+      transport.seek(player.currentTime + 5);
       return;
     case 'ArrowUp':
       if (!event.ctrlKey && !event.metaKey) return;
@@ -98,10 +100,10 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
       player.toggleMute();
       return;
     case 'KeyN':
-      void player.next();
+      transport.next();
       return;
     case 'KeyP':
-      void player.prev();
+      transport.prev();
       return;
     case 'KeyL':
       ui.toggleLyrics();

@@ -1,12 +1,18 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+import { useRoute } from 'vue-router';
 import { useToast } from '@/composables/useToast';
 import AppIcon from './AppIcon.vue';
 
 const toast = useToast();
+const route = useRoute();
+
+/** 登录 / 引导这类 bare 页没有播放条，toast 不必再为它抬高。 */
+const bare = computed(() => route.meta.bare === true);
 </script>
 
 <template>
-  <TransitionGroup name="toast" tag="div" class="toast-host">
+  <TransitionGroup name="toast" tag="div" class="toast-host" :class="{ 'is-bare': bare }">
     <div v-for="item in toast.items.value" :key="item.id" class="toast" :class="`is-${item.kind}`">
       <AppIcon
         :name="item.kind === 'success' ? 'check' : item.kind === 'error' ? 'alert' : 'sparkles'"
@@ -31,6 +37,11 @@ const toast = useToast();
   align-items: flex-end;
   gap: 10px;
   pointer-events: none;
+}
+
+/* 登录 / 引导页没有播放条，回到正常的右下角距离。 */
+.toast-host.is-bare {
+  bottom: 22px;
 }
 
 .toast {

@@ -2,12 +2,15 @@
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import PageState from '@/components/common/PageState.vue';
+import PlaylistDialog from '@/components/library/PlaylistDialog.vue';
 import TrackList from '@/components/music/TrackList.vue';
 import { libraryApi } from '@/api/library';
 import type { Playlist, UnifiedTrack } from '@/api/types';
 import { useToast } from '@/composables/useToast';
 import { useLibraryStore } from '@/stores/library';
+import { cachedImage } from '@/utils/cacheImage';
 
 const route = useRoute();
 const router = useRouter();
@@ -20,11 +23,16 @@ const playlist = ref<Playlist | null>(null);
 const items = ref<UnifiedTrack[]>([]);
 const loading = ref(false);
 const error = ref('');
-const editing = ref(false);
-const confirmingDelete = ref(false);
-const nameDraft = ref('');
-const descDraft = ref('');
+/** 编辑信息 / 删除确认都走弹窗，和 web 端一致，不再用页内表单和「再点一次」。 */
+const editOpen = ref(false);
+const deleteOpen = ref(false);
 const busy = ref(false);
+
+const deleteMessage = computed(() => {
+  const current = playlist.value;
+  if (!current) return '';
+  return `「${current.name}」以及里面的 ${current.trackCount} 首记录会一并移除，该操作不可恢复。`;
+});
 
 async function load(): Promise<void> {
   if (!playlistId.value) return;
@@ -45,39 +53,9 @@ async function load(): Promise<void> {
 
 watch(playlistId, load, { immediate: true });
 
-function startEdit(): void {
-  nameDraft.value = playlist.value?.name ?? '';
-  descDraft.value = playlist.value?.description ?? '';
-  editing.value = true;
-}
-
-async function saveEdit(): Promise<void> {
-  const name = nameDraft.value.trim();
-  if (!name) {
-    toast.info('歌单名称不能为空');
-    return;
-  }
-
-  busy.value = true;
-  try {
-    await library.updatePlaylist(playlistId.value, {
-      name,
-      description: descDraft.value.trim(),
-    });
-    if (playlist.value) {
-      playlist.value = {
-        ...playlist.value,
-        name,
-        description: descDraft.value.trim(),
-      };
-    }
-    editing.value = false;
-    toast.success('歌单已更新');
-  } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : '保存歌单失败');
-  } finally {
-    busy.value = false;
-  }
+/** 弹窗保存成功后用返回值就地更新，不必为改个名字再拉一次详情。 */
+function onSaved(input: { name: string; description: string }): void {
+  if (playlist.value) playlist.value = { ...playlist.value, ...input };
 }
 
 async function removeTrack(track: UnifiedTrack): Promise<void> {
@@ -93,44 +71,33 @@ async function removeTrack(track: UnifiedTrack): Promise<void> {
   }
 }
 
-async function removePlaylist(): Promise<void> {
-  if (!confirmingDelete.value) {
-    confirmingDelete.value = true;
-    return;
-  }
+/** 删除当前歌单；成功后回「音乐库」，避免停在一个已不存在的页面上。 */
+async function confirmDelete(): Promise<void> {
+  const current = playlist.value;
+  if (!current) return;
 
   busy.value = true;
   try {
-    await library.deletePlaylist(playlistId.value);
+    await library.deletePlaylist(current.id);
     toast.success('歌单已删除');
+    deleteOpen.value = false;
     void router.replace({ name: 'library' });
   } catch (caught) {
     toast.error(caught instanceof Error ? caught.message : '删除歌单失败');
-    confirmingDelete.value = false;
   } finally {
     busy.value = false;
   }
-}
-
-function goBack(): void {
-  if (window.history.length > 1) router.back();
-  else void router.push({ name: 'library' });
 }
 </script>
 
 <template>
   <div class="playlist-view">
-    <button type="button" class="back" @click="goBack">
-      <AppIcon name="prev" :size="13" />
-      返回音乐库
-    </button>
-
     <PageState :loading="loading" :error="error" text="正在读取歌单…" @retry="load" />
 
     <template v-if="!loading && !error && playlist">
       <header class="hero">
         <div class="cover">
-          <img v-if="playlist.cover" :src="playlist.cover" alt="" />
+          <img v-if="playlist.cover" :src="cachedImage(playlist.cover)" alt="" />
           <AppIcon v-else name="list" :size="34" :stroke-width="1.3" />
         </div>
 
@@ -144,47 +111,37 @@ function goBack(): void {
           </div>
 
           <div class="actions">
-            <button type="button" class="mini" @click="startEdit">重命名</button>
-            <button
-              type="button"
-              class="mini danger"
-              :disabled="busy"
-              @click="removePlaylist"
-            >
-              {{ confirmingDelete ? '再点一次确认删除' : '删除歌单' }}
-            </button>
-            <button
-              v-if="confirmingDelete"
-              type="button"
-              class="mini"
-              @click="confirmingDelete = false"
-            >
-              取消
+            <button type="button" class="mini" @click="editOpen = true">编辑信息</button>
+            <button type="button" class="mini danger" :disabled="busy" @click="deleteOpen = true">
+              删除歌单
             </button>
           </div>
         </div>
       </header>
 
-      <form v-if="editing" class="edit-form" @submit.prevent="saveEdit">
-        <input v-model="nameDraft" class="edit-input" type="text" maxlength="60" placeholder="歌单名称" />
-        <input
-          v-model="descDraft"
-          class="edit-input"
-          type="text"
-          maxlength="200"
-          placeholder="描述（可选）"
-        />
-        <div class="edit-actions">
-          <button type="submit" class="mini primary" :disabled="busy">保存</button>
-          <button type="button" class="mini" @click="editing = false">取消</button>
-        </div>
-      </form>
+      <!-- 编辑信息与删除确认：与 web 端一样都是弹窗，页面里不再留表单 / 二次点击。 -->
+      <PlaylistDialog
+        :visible="editOpen"
+        :playlist="playlist"
+        @close="editOpen = false"
+        @saved="onSaved"
+      />
+      <ConfirmDialog
+        :visible="deleteOpen"
+        title="删除歌单"
+        :message="deleteMessage"
+        confirm-label="删除"
+        danger
+        :busy="busy"
+        @close="deleteOpen = false"
+        @confirm="confirmDelete"
+      />
 
       <TrackList
         :tracks="items"
         title="曲目"
         removable
-        empty-text="这个歌单还是空的。在曲目行上点「…」可以加入歌单。"
+        empty-text="这个歌单还是空的。在别的列表里右键曲目（或点行尾「…」），从「添加到歌单」加进来。"
         @remove="removeTrack"
       />
     </template>
@@ -199,27 +156,6 @@ function goBack(): void {
   flex-direction: column;
   gap: 20px;
   animation: fade-up var(--dur-slow) var(--ease);
-}
-
-.back {
-  display: inline-flex;
-  width: fit-content;
-  align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  color: var(--text-faint);
-  font-size: 11px;
-  transition:
-    border-color var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-
-.back:hover {
-  border-color: var(--border-strong);
-  color: var(--text);
 }
 
 .hero {
@@ -321,46 +257,7 @@ function goBack(): void {
   cursor: default;
 }
 
-.mini.primary {
-  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
 .mini.danger {
-  color: #e0453a;
-}
-
-.edit-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-
-.edit-input {
-  flex: 1;
-  min-width: 160px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  font-size: 12px;
-  outline: none;
-}
-
-.edit-input:focus {
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-}
-
-.edit-actions {
-  display: flex;
-  gap: 6px;
+  color: var(--danger);
 }
 </style>

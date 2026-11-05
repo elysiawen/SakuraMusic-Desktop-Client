@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import {
+  CACHE_KIND_HINT,
+  CACHE_KIND_LABEL,
+  CACHE_KINDS,
+  type CacheKind,
+  type CacheStats,
+} from '@shared/cache';
 import type { AppInfo, DesktopConfig, DesktopConfigPatch } from '@shared/ipc';
 import AppIcon from '@/components/common/AppIcon.vue';
 import {
@@ -31,17 +38,72 @@ const ROUTE_OPTIONS: Array<{ id: RouteMode; label: string }> = [
   { id: 'proxy', label: '中转' },
 ];
 
+/** 缓存额度与安卓端同一套档位：0 = 不缓存，-1 = 不限。 */
+const AUDIO_CACHE_OPTIONS = [
+  { value: 0, label: '不缓存' },
+  { value: 256, label: '256 MB' },
+  { value: 512, label: '512 MB' },
+  { value: 1024, label: '1 GB' },
+  { value: 2048, label: '2 GB' },
+  { value: 4096, label: '4 GB' },
+  { value: 10240, label: '10 GB' },
+  { value: -1, label: '不限' },
+];
+
+const COVER_CACHE_OPTIONS = [
+  { value: 0, label: '不缓存' },
+  { value: 64, label: '64 MB' },
+  { value: 128, label: '128 MB' },
+  { value: 256, label: '256 MB' },
+  { value: 512, label: '512 MB' },
+  { value: 1024, label: '1 GB' },
+  { value: -1, label: '不限' },
+];
+
+const LYRIC_TTL_OPTIONS = [
+  { value: 7, label: '7 天' },
+  { value: 30, label: '30 天' },
+  { value: 90, label: '90 天' },
+  { value: -1, label: '永久' },
+];
+
+const META_TTL_OPTIONS = [
+  { value: 1, label: '1 天' },
+  { value: 7, label: '7 天' },
+  { value: 30, label: '30 天' },
+  { value: -1, label: '永久' },
+];
+
+const LYRIC_FONT_OPTIONS = [
+  { value: 24, label: '小' },
+  { value: 32, label: '标准' },
+  { value: 42, label: '大' },
+];
+
+const LYRIC_COLOR_OPTIONS = [
+  { value: '#ffffff', label: '白' },
+  { value: '#ff8fab', label: '樱粉' },
+  { value: '#8be9fd', label: '青' },
+  { value: '#ffd166', label: '暖黄' },
+];
+
 const config = ref<DesktopConfig | null>(null);
 const appInfo = ref<AppInfo | null>(null);
 const deviceDraft = ref('');
-const cacheDraft = ref(2048);
 const saving = ref(false);
+const cacheStats = ref<CacheStats | null>(null);
+const cacheBusy = ref(false);
+// 托盘菜单、歌词窗口按钮也会改配置：订阅广播，三处状态保持一致。
+const offPrefs = window.sakura.lyric.onPrefs((value) => {
+  config.value = value;
+});
+
+onBeforeUnmount(() => offPrefs());
 
 onMounted(async () => {
   try {
     config.value = await window.sakura.getConfig();
     deviceDraft.value = config.value.deviceName;
-    cacheDraft.value = config.value.cacheLimitMb;
   } catch {
     config.value = null;
   }
@@ -50,15 +112,77 @@ onMounted(async () => {
   } catch {
     appInfo.value = null;
   }
+  await loadCacheStats();
 });
+
+async function loadCacheStats(): Promise<void> {
+  try {
+    cacheStats.value = await window.sakura.cache.stats();
+  } catch {
+    cacheStats.value = null;
+  }
+}
+
+function usageOf(kind: CacheKind): number {
+  return cacheStats.value?.kinds.find((item) => item.kind === kind)?.bytes ?? 0;
+}
+
+function entriesOf(kind: CacheKind): number {
+  return cacheStats.value?.kinds.find((item) => item.kind === kind)?.entries ?? 0;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** index;
+  const text = index === 0 || value >= 10 ? Math.round(value).toString() : value.toFixed(1);
+  return `${text} ${units[index]}`;
+}
+
+function pickAudioCache(mb: number, label: string): void {
+  if (config.value?.audioCacheMb === mb) return;
+  void patchConfig({ audioCacheMb: mb }, `音频缓存：${label}`);
+}
+
+function pickCoverCache(mb: number, label: string): void {
+  if (config.value?.coverCacheMb === mb) return;
+  void patchConfig({ coverCacheMb: mb }, `封面缓存：${label}`);
+}
+
+function pickLyricTtl(days: number, label: string): void {
+  if (config.value?.lyricCacheDays === days) return;
+  void patchConfig({ lyricCacheDays: days }, `歌词保留：${label}`);
+}
+
+function pickMetaTtl(days: number, label: string): void {
+  if (config.value?.metaCacheDays === days) return;
+  void patchConfig({ metaCacheDays: days }, `歌曲信息保留：${label}`);
+}
+
+async function clearCache(kind?: CacheKind): Promise<void> {
+  const label = kind ? CACHE_KIND_LABEL[kind] : '全部缓存';
+  if (!window.confirm(`清理${label}？下次播放或浏览时会重新下载。`)) return;
+
+  cacheBusy.value = true;
+  try {
+    cacheStats.value = await window.sakura.cache.clear(kind);
+    toast.success(`${label}已清理`);
+  } catch (caught) {
+    toast.error(caught instanceof Error ? caught.message : '清理失败');
+  } finally {
+    cacheBusy.value = false;
+  }
+}
 
 async function patchConfig(patch: DesktopConfigPatch, message: string): Promise<void> {
   saving.value = true;
   try {
     config.value = await window.sakura.updateConfig(patch);
     deviceDraft.value = config.value.deviceName;
-    cacheDraft.value = config.value.cacheLimitMb;
     toast.success(message);
+    // 调小额度会触发 LRU 清理，占用数字要跟着刷新。
+    void loadCacheStats();
   } catch (caught) {
     toast.error(caught instanceof Error ? caught.message : '保存失败');
   } finally {
@@ -75,15 +199,6 @@ function saveDeviceName(): void {
   void patchConfig({ deviceName: name }, '设备名已更新');
 }
 
-function saveCacheLimit(): void {
-  const value = Number(cacheDraft.value);
-  if (!Number.isFinite(value) || value < 128 || value > 102400) {
-    toast.info('缓存上限需在 128–102400 MB 之间');
-    return;
-  }
-  void patchConfig({ cacheLimitMb: value }, '缓存上限已更新');
-}
-
 async function chooseDirectory(): Promise<void> {
   const dir = await window.sakura.chooseDirectory().catch(() => null);
   if (!dir) return;
@@ -95,8 +210,40 @@ function openDownloadDir(): void {
   if (dir) void window.sakura.showItemInFolder(dir);
 }
 
+const isWindows = window.sakura.platform === 'win32';
+
 function toggleTray(next: boolean): void {
   void patchConfig({ closeToTray: next }, next ? '关闭窗口时收进托盘' : '关闭窗口时直接退出');
+}
+
+function toggleDesktopLyric(next: boolean): void {
+  // 重新开启时解除锁定，避免窗口刚出现就点不到。
+  void patchConfig(
+    { desktopLyric: next, lyricLocked: false },
+    next ? '桌面歌词已开启' : '桌面歌词已关闭',
+  );
+}
+
+function toggleTaskbarPreview(next: boolean): void {
+  void patchConfig({ taskbarPreview: next }, next ? '任务栏预览已开启' : '任务栏预览已关闭');
+}
+
+function toggleLyricLocked(next: boolean): void {
+  void patchConfig({ lyricLocked: next }, next ? '歌词已锁定，鼠标可穿透' : '歌词已解锁');
+}
+
+function toggleLyricTrans(next: boolean): void {
+  void patchConfig({ lyricShowTrans: next }, next ? '显示歌词翻译' : '隐藏歌词翻译');
+}
+
+function pickLyricFontSize(value: number, label: string): void {
+  if (config.value?.lyricFontSize === value) return;
+  void patchConfig({ lyricFontSize: value }, `歌词字号：${label}`);
+}
+
+function pickLyricColor(value: string, label: string): void {
+  if (config.value?.lyricColor === value) return;
+  void patchConfig({ lyricColor: value }, `歌词颜色：${label}`);
 }
 
 function pickQuality(quality: Quality): void {
@@ -279,6 +426,137 @@ function supportedCapabilities(platform: Platform): Capability[] {
       </div>
     </section>
 
+    <!-- 缓存 -->
+    <section class="section">
+      <header class="section-head">
+        <div class="section-title">
+          <span class="section-icon"><AppIcon name="server" :size="14" /></span>
+          <div>
+            <h2>缓存</h2>
+            <p>
+              音频边播边存；歌词与歌曲信息到期回源，断网时回退旧数据。下载文件不受缓存清理影响。
+            </p>
+          </div>
+        </div>
+        <span class="sync">占用 {{ formatBytes(cacheStats?.totalBytes ?? 0) }}</span>
+      </header>
+
+      <div class="panel">
+        <div v-for="kind in CACHE_KINDS" :key="kind" class="row">
+          <div class="row-copy">
+            <strong>{{ CACHE_KIND_LABEL[kind] }}</strong>
+            <small>{{ CACHE_KIND_HINT[kind] }} · {{ entriesOf(kind) }} 项</small>
+          </div>
+          <div class="inline">
+            <span class="cache-size">{{ formatBytes(usageOf(kind)) }}</span>
+            <button
+              type="button"
+              class="mini"
+              :disabled="cacheBusy || usageOf(kind) <= 0"
+              @click="clearCache(kind)"
+            >
+              清理
+            </button>
+          </div>
+        </div>
+
+        <div class="row stack">
+          <div class="row-copy">
+            <strong>音频缓存上限</strong>
+            <small>超出后淘汰最久未播放的音频；正在播放的文件会留到下次清理</small>
+          </div>
+          <div class="options">
+            <button
+              v-for="option in AUDIO_CACHE_OPTIONS"
+              :key="option.value"
+              type="button"
+              class="option"
+              :class="{ active: config?.audioCacheMb === option.value }"
+              :disabled="saving"
+              @click="pickAudioCache(option.value, option.label)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="row stack">
+          <div class="row-copy">
+            <strong>封面缓存上限</strong>
+            <small>封面与头像统一走本机代理，离线时也能显示已缓存过的图片</small>
+          </div>
+          <div class="options">
+            <button
+              v-for="option in COVER_CACHE_OPTIONS"
+              :key="option.value"
+              type="button"
+              class="option"
+              :class="{ active: config?.coverCacheMb === option.value }"
+              :disabled="saving"
+              @click="pickCoverCache(option.value, option.label)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="row stack">
+          <div class="row-copy">
+            <strong>歌词保留时间</strong>
+            <small>过期后下次播放重新拉取；拉取失败时仍显示旧歌词</small>
+          </div>
+          <div class="options">
+            <button
+              v-for="option in LYRIC_TTL_OPTIONS"
+              :key="option.value"
+              type="button"
+              class="option"
+              :class="{ active: config?.lyricCacheDays === option.value }"
+              :disabled="saving"
+              @click="pickLyricTtl(option.value, option.label)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="row stack">
+          <div class="row-copy">
+            <strong>歌曲信息保留时间</strong>
+            <small>歌曲、专辑、歌手详情共用这一份保留时间</small>
+          </div>
+          <div class="options">
+            <button
+              v-for="option in META_TTL_OPTIONS"
+              :key="option.value"
+              type="button"
+              class="option"
+              :class="{ active: config?.metaCacheDays === option.value }"
+              :disabled="saving"
+              @click="pickMetaTtl(option.value, option.label)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="row-copy">
+            <strong>清理全部缓存</strong>
+            <small>不会删除已下载到本地的歌曲</small>
+          </div>
+          <button
+            type="button"
+            class="mini"
+            :disabled="cacheBusy || !cacheStats || cacheStats.totalBytes <= 0"
+            @click="clearCache()"
+          >
+            清理全部
+          </button>
+        </div>
+      </div>
+    </section>
+
     <!-- 桌面 -->
     <section class="section">
       <header class="section-head">
@@ -308,7 +586,7 @@ function supportedCapabilities(platform: Platform): Capability[] {
         <div class="row">
           <div class="row-copy">
             <strong>关闭窗口时收进托盘</strong>
-            <small>托盘在 M6 接入；未接入前关闭窗口仍会退出</small>
+            <small>收进托盘后播放不中断，点托盘图标可恢复窗口</small>
           </div>
           <label class="switch">
             <input
@@ -338,25 +616,105 @@ function supportedCapabilities(platform: Platform): Capability[] {
 
         <div class="row">
           <div class="row-copy">
-            <strong>下载占用上限</strong>
-            <small>本地下载总大小超过上限时，音乐库会提示清理（不会自动删文件）</small>
+            <strong>桌面歌词</strong>
+            <small>置顶的透明歌词条，可拖动摆放；收进托盘后歌词也会继续显示</small>
           </div>
-          <div class="inline">
+          <label class="switch">
             <input
-              v-model.number="cacheDraft"
-              class="text-input narrow"
-              type="number"
-              min="128"
-              max="102400"
-              step="128"
+              type="checkbox"
+              :checked="config?.desktopLyric ?? false"
               :disabled="saving"
+              @change="toggleDesktopLyric(($event.target as HTMLInputElement).checked)"
             />
-            <span class="unit">MB</span>
-            <button type="button" class="mini primary" :disabled="saving" @click="saveCacheLimit">
-              保存
-            </button>
-          </div>
+            <span class="track" />
+          </label>
         </div>
+
+        <div v-if="isWindows" class="row">
+          <div class="row-copy">
+            <strong>任务栏预览</strong>
+            <small>鼠标悬到任务栏图标上时，显示封面卡片与上一首 / 播放 / 下一首按钮</small>
+          </div>
+          <label class="switch">
+            <input
+              type="checkbox"
+              :checked="config?.taskbarPreview ?? true"
+              :disabled="saving"
+              @change="toggleTaskbarPreview(($event.target as HTMLInputElement).checked)"
+            />
+            <span class="track" />
+          </label>
+        </div>
+
+        <template v-if="config?.desktopLyric">
+          <div class="row">
+            <div class="row-copy">
+              <strong>锁定桌面歌词</strong>
+              <small>锁定后鼠标穿透、不再遮挡操作；可从托盘菜单或这里解锁</small>
+            </div>
+            <label class="switch">
+              <input
+                type="checkbox"
+                :checked="config?.lyricLocked ?? false"
+                :disabled="saving"
+                @change="toggleLyricLocked(($event.target as HTMLInputElement).checked)"
+              />
+              <span class="track" />
+            </label>
+          </div>
+
+          <div class="row stack">
+            <div class="row-copy">
+              <strong>歌词字号</strong>
+            </div>
+            <div class="options">
+              <button
+                v-for="option in LYRIC_FONT_OPTIONS"
+                :key="option.value"
+                type="button"
+                class="option"
+                :class="{ active: (config?.lyricFontSize ?? 24) === option.value }"
+                @click="pickLyricFontSize(option.value, option.label)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+          </div>
+
+          <div class="row stack">
+            <div class="row-copy">
+              <strong>歌词颜色</strong>
+            </div>
+            <div class="options">
+              <button
+                v-for="option in LYRIC_COLOR_OPTIONS"
+                :key="option.value"
+                type="button"
+                class="option"
+                :class="{ active: (config?.lyricColor ?? '#ffffff') === option.value }"
+                @click="pickLyricColor(option.value, option.label)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="row-copy">
+              <strong>显示歌词翻译</strong>
+              <small>歌曲带翻译时在原词下方小字显示</small>
+            </div>
+            <label class="switch">
+              <input
+                type="checkbox"
+                :checked="config?.lyricShowTrans ?? true"
+                :disabled="saving"
+                @change="toggleLyricTrans(($event.target as HTMLInputElement).checked)"
+              />
+              <span class="track" />
+            </label>
+          </div>
+        </template>
 
         <div class="row">
           <div class="row-copy">
@@ -817,17 +1175,17 @@ function supportedCapabilities(platform: Platform): Capability[] {
   transition: border-color var(--dur) var(--ease);
 }
 
-.text-input.narrow {
-  width: 96px;
-}
-
 .text-input:focus {
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
-.unit {
-  color: var(--text-faint);
+.cache-size {
+  min-width: 64px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .mini {

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import type { ServerProbeResult } from '@shared/ipc';
 import AppIcon from '@/components/common/AppIcon.vue';
 import SakuraPetals from '@/components/common/SakuraPetals.vue';
+import BareTitleBar from '@/components/layout/BareTitleBar.vue';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
@@ -18,7 +19,6 @@ const allowInvalidCert = ref(false);
 const testing = ref(false);
 const saving = ref(false);
 const result = ref<ServerProbeResult | null>(null);
-const errorMessage = ref('');
 
 const canContinue = computed(() => Boolean(baseUrl.value.trim()) && !testing.value && !saving.value);
 
@@ -31,7 +31,6 @@ onMounted(async () => {
 async function testConnection(): Promise<void> {
   testing.value = true;
   result.value = null;
-  errorMessage.value = '';
   try {
     result.value = await window.sakura.testServer({
       baseUrl: baseUrl.value,
@@ -40,10 +39,11 @@ async function testConnection(): Promise<void> {
     if (result.value.ok) {
       toast.success('服务器连接成功');
     } else if (result.value.code !== 'certificate') {
-      errorMessage.value = result.value.error ?? '连接失败';
+      // 证书错误由页内的指纹详情块说明，其余失败统一走全局通知。
+      toast.error(result.value.error ?? '连接失败');
     }
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '连接失败';
+    toast.error(error instanceof Error ? error.message : '连接失败');
   } finally {
     testing.value = false;
   }
@@ -56,13 +56,12 @@ async function continueNext(): Promise<void> {
   }
 
   saving.value = true;
-  errorMessage.value = '';
   try {
     await auth.saveServer(baseUrl.value, allowInvalidCert.value);
     toast.success('服务器已保存');
     await router.replace({ name: 'login' });
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '保存失败';
+    toast.error(error instanceof Error ? error.message : '保存失败');
   } finally {
     saving.value = false;
   }
@@ -72,17 +71,10 @@ async function continueNext(): Promise<void> {
 <template>
   <div class="onboarding">
     <SakuraPetals v-if="theme.petals" />
+    <BareTitleBar label="连接服务器" />
 
     <div class="layout">
       <section class="brand-panel">
-        <div class="brand-lockup">
-          <span class="logo">
-            <AppIcon name="sparkles" :size="20" :stroke-width="2" />
-          </span>
-          <span class="brand-name">Sakura Music</span>
-          <span class="brand-tag">桌面版</span>
-        </div>
-
         <h1>两个平台，<br /><em>一个播放器。</em></h1>
         <p class="lede">
           网易云与 QQ 音乐聚合到一起。桌面端负责直连 CDN、系统媒体控制与本地缓存，
@@ -209,14 +201,6 @@ async function continueNext(): Promise<void> {
           </div>
         </div>
 
-        <div v-else-if="errorMessage" class="result error">
-          <span class="result-icon"><AppIcon name="alert" :size="17" /></span>
-          <div>
-            <strong>连接失败</strong>
-            <p>{{ errorMessage }}</p>
-          </div>
-        </div>
-
         <footer class="card-footer">
           <AppIcon name="lock" :size="13" />
           <span>登录态只保存在本机系统安全存储中，渲染进程拿不到令牌。</span>
@@ -234,7 +218,8 @@ async function continueNext(): Promise<void> {
   align-items: center;
   justify-content: center;
   overflow-y: auto;
-  padding: 44px;
+  /* 顶栏浮在页面顶部，内容整体下移一条标题栏的高度。 */
+  padding: calc(44px + var(--titlebar-h)) 44px 44px;
 }
 
 .layout {
@@ -255,42 +240,9 @@ async function continueNext(): Promise<void> {
   align-items: flex-start;
 }
 
-.brand-lockup {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.logo {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border-radius: 12px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: var(--accent-contrast);
-  box-shadow: 0 12px 28px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-.brand-name {
-  font-size: 16px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-}
-
-.brand-tag {
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  color: var(--text-faint);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-}
-
-/* 里程碑小标签已去掉，原来靠它撑开的那段留白挪到标题上。 */
+/* 品牌行已由顶栏统一承担，标题不必再为它留白。 */
 .brand-panel h1 {
-  margin-top: 40px;
+  margin-top: 0;
   font-size: clamp(36px, 4.6vw, 54px);
   font-weight: 850;
   letter-spacing: -0.04em;
@@ -480,11 +432,6 @@ async function continueNext(): Promise<void> {
 .result.warning .result-icon {
   background: color-mix(in srgb, var(--warning) 16%, transparent);
   color: var(--warning);
-}
-
-.result.error .result-icon {
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
-  color: var(--danger);
 }
 
 .upstreams {

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { DEV_BFF_PORT } from '@shared/constants';
+import { handleCover } from '../cache/cover';
 import { handleApi } from './apiProxy';
 import { handleConnectEvents } from './connect';
 import { handleMedia } from './media';
@@ -86,6 +87,10 @@ async function route(
   }
   if (pathname.startsWith('/connect/events')) {
     await handleConnectEvents(req, res, url);
+    return;
+  }
+  if (pathname === '/media/cover') {
+    await handleCover(req, res, url);
     return;
   }
   if (pathname.startsWith('/media/')) {

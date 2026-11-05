@@ -109,16 +109,11 @@ export function totalBytes(): number {
   return listItems().reduce((sum, item) => sum + (item.bytes || 0), 0);
 }
 
-export function limitBytes(): number {
-  return Math.max(128, getConfig().cacheLimitMb) * 1024 * 1024;
-}
-
 export function library(): OfflineLibrary {
   const items = listItems();
   return {
     items: items.map(({ fileName: _fileName, mime: _mime, ...item }) => item),
     usedBytes: items.reduce((sum, item) => sum + (item.bytes || 0), 0),
-    limitBytes: limitBytes(),
   };
 }
 

@@ -4,6 +4,7 @@ import AppIcon from '@/components/common/AppIcon.vue';
 import { credentialApi } from '@/api/library';
 import type { AccountProfile, BindStatus, Platform, QqLoginType } from '@/api/types';
 import { useToast } from '@/composables/useToast';
+import { cachedImage } from '@/utils/cacheImage';
 import { platformName } from '@/utils/format';
 
 const props = defineProps<{ platform: Platform }>();
@@ -233,7 +234,7 @@ onBeforeUnmount(() => {
       <template v-else-if="step === 'choose'">
         <div class="profile">
           <span class="avatar">
-            <img v-if="profile?.avatar" :src="profile.avatar" alt="" />
+            <img v-if="profile?.avatar" :src="cachedImage(profile.avatar)" alt="" />
             <AppIcon v-else name="users" :size="20" />
           </span>
           <div>
