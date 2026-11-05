@@ -1,6 +1,7 @@
 import type { Component } from 'vue';
 import ImmersiveMode from './ImmersiveMode.vue';
 import ClassicMode from './ClassicMode.vue';
+import MistMode from './MistMode.vue';
 
 /**
  * 全屏播放页（Now Playing）的样式注册表。
@@ -34,6 +35,13 @@ export const NOW_PLAYING_MODES: NowPlayingModeDef[] = [
     icon: 'sparkles',
     hint: '大字居中 · 流体背景 · 实时频谱',
     component: ImmersiveMode,
+  },
+  {
+    id: 'mist',
+    name: '雾笺',
+    icon: 'droplet',
+    hint: '雨夜车窗 · 指尖按笔顺写歌词 · 雨点随歌声打窗',
+    component: MistMode,
   },
 ];
 
