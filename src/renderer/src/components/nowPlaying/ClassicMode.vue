@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
 import { usePlayerStore } from '@/stores/player';
 import { useRoomStore } from '@/stores/room';
@@ -8,8 +7,8 @@ import { useUiStore } from '@/stores/ui';
 import { formatTime, platformName } from '@/utils/format';
 import { cachedImage } from '@/utils/cacheImage';
 import { activeLineIndex, parseLyric, type LyricLine } from '@/utils/lyric';
-import QualityPicker from './QualityPicker.vue';
-import QueueButton from './QueueButton.vue';
+import NowPlayingTopActions from './NowPlayingTopActions.vue';
+import QualityPicker from '@/components/layout/QualityPicker.vue';
 
 /**
  * 全屏歌词页（与 web 端的 `LyricOverlay` 同一套观感）。
@@ -24,23 +23,11 @@ import QueueButton from './QueueButton.vue';
 const player = usePlayerStore();
 const room = useRoomStore();
 const ui = useUiStore();
-const router = useRouter();
 
-const isMac = window.sakura.platform === 'darwin';
-const maximized = ref(false);
-let unsubscribeMaximized: (() => void) | null = null;
-
-function minimize(): void {
-  void window.sakura.windowControls.minimize();
-}
-
-async function toggleMaximize(): Promise<void> {
-  if (isMac) return;
-  maximized.value = await window.sakura.windowControls.toggleMaximize();
-}
-
-function close(): void {
-  void window.sakura.windowControls.close();
+/** 双击标题栏最大化/还原（macOS 的红绿灯在左边，这条带不背这个习惯）。 */
+function toggleMaximize(): void {
+  if (window.sakura.platform === 'darwin') return;
+  void window.sakura.windowControls.toggleMaximize();
 }
 
 const roomSeat = computed(() => room.seatActive);
@@ -172,11 +159,6 @@ function onVolumeInput(event: Event): void {
   player.setVolume(Number((event.target as HTMLInputElement).value) / 100);
 }
 
-function openTogether(): void {
-  ui.closeLyrics();
-  void router.push('/together');
-}
-
 /* ------------------------------ 键盘 ------------------------------ */
 
 function onKeydown(event: KeyboardEvent): void {
@@ -224,19 +206,10 @@ function onKeydown(event: KeyboardEvent): void {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown);
-  if (!isMac) {
-    void window.sakura.windowControls.isMaximized().then((value) => {
-      maximized.value = value;
-    });
-    unsubscribeMaximized = window.sakura.windowControls.onMaximizedChange((value) => {
-      maximized.value = value;
-    });
-  }
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
-  unsubscribeMaximized?.();
 });
 </script>
 
@@ -266,40 +239,8 @@ onBeforeUnmount(() => {
             </span>
           </div>
 
-          <div class="lyric-actions no-drag" @dblclick.stop>
-            <button type="button" class="btn-icon" title="一起听" @click="openTogether">
-              <AppIcon name="users" :size="18" />
-            </button>
-
-            <!-- 队列：这里在页面顶部，面板必须向下弹 -->
-            <QueueButton placement="down" :size="18" />
-
-            <template v-if="!isMac">
-              <span class="action-divider" aria-hidden="true" />
-
-              <div class="window-controls">
-                <button class="window-button" type="button" aria-label="最小化" @click="minimize">
-                  <AppIcon name="minimize" :size="15" />
-                </button>
-                <button
-                  class="window-button"
-                  type="button"
-                  :aria-label="maximized ? '还原' : '最大化'"
-                  @click="toggleMaximize"
-                >
-                  <AppIcon :name="maximized ? 'restore' : 'maximize'" :size="13" />
-                </button>
-                <button
-                  class="window-button is-close"
-                  type="button"
-                  aria-label="关闭"
-                  @click="close"
-                >
-                  <AppIcon name="close" :size="15" />
-                </button>
-              </div>
-            </template>
-          </div>
+          <!-- 右上角操作区：所有播放页样式共享同一份，见 NowPlayingTopActions -->
+          <NowPlayingTopActions />
         </div>
       </header>
 
@@ -553,49 +494,6 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.lyric-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-/* 页面操作与窗口按钮之间的一道竖线 */
-.action-divider {
-  width: 1px;
-  height: 18px;
-  margin: 0 6px;
-  background: var(--border-strong);
-}
-
-.window-controls {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  margin-right: -2px;
-}
-
-.window-button {
-  display: grid;
-  width: 36px;
-  height: 30px;
-  place-items: center;
-  border-radius: var(--radius-xs);
-  color: var(--text-muted);
-  transition:
-    background var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease);
-}
-
-.window-button:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
-.window-button.is-close:hover {
-  background: #e5484d;
-  color: #fff;
 }
 
 .lyric-badge {

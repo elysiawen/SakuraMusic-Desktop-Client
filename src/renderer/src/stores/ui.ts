@@ -3,6 +3,11 @@ import { defineStore } from 'pinia';
 
 /** 歌词页底部快捷键提示条的显示状态，关一次就记住。 */
 const HINTS_STORAGE_KEY = 'sakura.desktop.lyric-hints';
+/**
+ * 全屏播放页样式 id，对应 `nowPlayingModes.ts` 注册表里的条目。
+ * 这里只存字符串不校验：存档里留了已删除的样式 id 时，渲染层会回落到第一种。
+ */
+const MODE_STORAGE_KEY = 'sakura.desktop.now-playing-mode';
 
 function loadHintsVisible(): boolean {
   try {
@@ -12,10 +17,18 @@ function loadHintsVisible(): boolean {
   }
 }
 
+function loadNowPlayingMode(): string {
+  try {
+    return localStorage.getItem(MODE_STORAGE_KEY) || 'classic';
+  } catch {
+    return 'classic';
+  }
+}
+
 /**
  * 桌面壳层的共享 UI 状态。
  *
- * 右侧那条常驻面板已经去掉：歌词改成与 web 端一致的全屏覆盖层（`LyricOverlay.vue`），
+ * 右侧那条常驻面板已经去掉：歌词改成与 web 端一致的全屏播放页（样式见 `nowPlaying/`），
  * 队列改成从播放条弹出的浮层面板（`QueuePanel.vue`）——所以这里不再有「页签」，
  * 只剩两个「开没开」的布尔值。
  */
@@ -26,6 +39,8 @@ export const useUiStore = defineStore('ui', () => {
   const queueOpen = ref(false);
   /** 歌词页底部的快捷键提示条：默认显示，用户关掉后不再冒出来。 */
   const lyricHints = ref(loadHintsVisible());
+  /** 全屏播放页样式 id（注册表见 `nowPlayingModes.ts`），样式菜单即时切换。 */
+  const nowPlayingMode = ref(loadNowPlayingMode());
 
   watch(lyricHints, (visible) => {
     try {
@@ -35,8 +50,20 @@ export const useUiStore = defineStore('ui', () => {
     }
   });
 
+  watch(nowPlayingMode, (mode) => {
+    try {
+      localStorage.setItem(MODE_STORAGE_KEY, mode);
+    } catch {
+      // 同上：存储不可用不影响当次切换。
+    }
+  });
+
   function setLyricHints(visible: boolean): void {
     lyricHints.value = visible;
+  }
+
+  function setNowPlayingMode(mode: string): void {
+    nowPlayingMode.value = mode;
   }
 
   function openLyrics(): void {
@@ -70,7 +97,9 @@ export const useUiStore = defineStore('ui', () => {
     lyricsOpen,
     queueOpen,
     lyricHints,
+    nowPlayingMode,
     setLyricHints,
+    setNowPlayingMode,
     openLyrics,
     closeLyrics,
     toggleLyrics,

@@ -100,6 +100,9 @@ export const usePlayerStore = defineStore('player', () => {
   const offline = useOfflineStore();
 
   let audio: HTMLAudioElement | null = null;
+  /** 沉浸歌词页的频谱：audio 接进 Web Audio 图后常驻，两个变量记接线结果。 */
+  let audioCtx: AudioContext | null = null;
+  let analyser: AnalyserNode | null = null;
   let pendingSeek = 0;
   let resolvingSource = false;
   let loadToken = 0;
@@ -424,6 +427,46 @@ export const usePlayerStore = defineStore('player', () => {
 
     audio = element;
     return element;
+  }
+
+  /**
+   * 沉浸式歌词页要取频谱时调用：把 audio 接进 Web Audio 图并返回 AnalyserNode。
+   *
+   * 播放地址全是主进程登记过的同源 `/media/...`（含封面代理），所以
+   * `createMediaElementSource` 不会踩跨域静音的坑。接线只发生一次
+   * （同一元素重复 createMediaElementSource 会抛），之后复用同一个 analyser。
+   * 返回 null 表示环境不支持，调用方用模拟节拍兜底。
+   */
+  function attachAnalyser(): AnalyserNode | null {
+    const element = ensureAudio();
+    if (analyser) {
+      // 浏览器自动播放策略可能把 context 挂起：每次取用都顺手恢复一次。
+      if (audioCtx && audioCtx.state === 'suspended') void audioCtx.resume();
+      return analyser;
+    }
+    try {
+      const context = new AudioContext();
+      const source = context.createMediaElementSource(element);
+      const node = context.createAnalyser();
+      node.fftSize = 512;
+      node.smoothingTimeConstant = 0.82;
+      source.connect(node);
+      node.connect(context.destination);
+      audioCtx = context;
+      analyser = node;
+      if (context.state === 'suspended') void context.resume();
+      return node;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 逐帧级的播放位置。`currentTime` 只靠 timeupdate 刷新（约 4Hz），
+   * 沉浸式歌词的行内扫光按它走会一格一格跳，这里直接读元素时钟。
+   */
+  function preciseTime(): number {
+    return audio ? audio.currentTime : currentTime.value;
   }
 
   function revertToLoaded(): void {
@@ -1048,6 +1091,10 @@ export const usePlayerStore = defineStore('player', () => {
     setRoomEndedHook,
     /** 注入一起听会员共享的地址来源（传 null 收回）。 */
     setSharedSourceProvider,
+    /** 沉浸式歌词页取 AnalyserNode（失败返回 null）。 */
+    attachAnalyser,
+    /** 逐帧级播放位置（歌词扫光用）。 */
+    preciseTime,
     cycleMode,
     setQuality,
     setPreferredPlatform,

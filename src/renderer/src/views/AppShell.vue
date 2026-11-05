@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import SakuraPetals from '@/components/common/SakuraPetals.vue';
 import AppSidebar from '@/components/layout/AppSidebar.vue';
-import LyricOverlay from '@/components/layout/LyricOverlay.vue';
+import { nowPlayingModeDef } from '@/components/nowPlaying/nowPlayingModes';
 import PlayerBar from '@/components/layout/PlayerBar.vue';
 import TitleBar from '@/components/layout/TitleBar.vue';
 import { useTransport } from '@/composables/useTransport';
@@ -157,8 +157,11 @@ onBeforeUnmount(() => {
 
     <PlayerBar />
 
-    <!-- 全屏歌词：盖住整个窗口（含品牌行与顶栏），页内自带一条同高的标题栏 -->
-    <LyricOverlay />
+    <!--
+      全屏歌词：盖住整个窗口（含品牌行与顶栏），页内自带一条同高的标题栏。
+      样式（经典 / 沉浸 / 以后追加的）由注册表驱动，页内顶栏的菜单即时切换。
+    -->
+    <component :is="nowPlayingModeDef(ui.nowPlayingMode).component" />
   </div>
 </template>
 
