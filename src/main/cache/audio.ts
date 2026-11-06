@@ -84,6 +84,20 @@ function cachedSize(file: string): number {
   }
 }
 
+/** 丢掉一整份音频缓存（不带 sidecar 的前缀不能留，否则会一直毒化这首歌）。 */
+function discardAudioCache(key: string): void {
+  try {
+    unlinkSync(audioFile(key));
+  } catch {
+    // 还被读流占用：删不掉就留到下次；这次仍按未命中回源。
+  }
+  try {
+    unlinkSync(metaFile(key));
+  } catch {
+    // ignore
+  }
+}
+
 function touch(file: string): void {
   const now = new Date();
   utimes(file, now, now, () => {
@@ -175,8 +189,21 @@ export function serveAudioFromCache(
   if (size <= 0) return false;
 
   const meta = readMeta(key);
-  const total = meta.total !== null && meta.total >= size ? meta.total : null;
-  const complete = total !== null && size >= total;
+  /*
+   * 前缀可用的前提是 sidecar 记着完整长度。没有 sidecar（进程被强杀、写到一半
+   * 就退出）或长度对不上，这份缓存就不可信：若按「总长未知」以 206 + `*` 返回，
+   * Chromium 算不出时长、进度条拖不动，播到前缀末尾还会直接判为播完跳下一首。
+   * 整份丢掉、回源重下，让这首歌恢复正常。
+   *
+   * 正在写的文件不能删（会打断写入器），这一次先回源，等写完下回再用。
+   */
+  if (meta.total === null || meta.total <= 0 || size > meta.total) {
+    if (!WRITING.has(key)) discardAudioCache(key);
+    return false;
+  }
+
+  const total = meta.total;
+  const complete = size >= total;
   const mime = meta.mime ?? 'audio/mpeg';
   const rangeHeader = typeof req.headers.range === 'string' ? req.headers.range : undefined;
 
@@ -188,7 +215,7 @@ export function serveAudioFromCache(
     if (!parsed) return false;
 
     if (parsed.start >= size) {
-      if (complete && total !== null) {
+      if (complete) {
         touch(file);
         sendUnsatisfiable(res, total);
         return true;
@@ -197,25 +224,25 @@ export function serveAudioFromCache(
       return false;
     }
 
-    const last = complete && total !== null ? total - 1 : size - 1;
+    const last = complete ? total - 1 : size - 1;
     const end = Math.min(parsed.end ?? last, last);
     if (end < parsed.start) {
-      sendUnsatisfiable(res, total ?? '*');
+      sendUnsatisfiable(res, total);
       return true;
     }
 
     touch(file);
-    sendRange(req, res, file, 206, parsed.start, end, total ?? '*', mime);
+    sendRange(req, res, file, 206, parsed.start, end, total, mime);
     return true;
   }
 
   touch(file);
-  if (complete && total !== null) {
+  if (complete) {
     // 完整曲目：可以按普通 200 返回，浏览器后续拖动也都能命中。
     sendRange(req, res, file, 200, 0, size - 1, total, mime);
   } else {
-    // 只有前缀：用 206 明确告知完整长度未知/更大，浏览器会继续请求剩余部分。
-    sendRange(req, res, file, 206, 0, size - 1, meta.total ?? '*', mime);
+    // 只有前缀：206 并如实报出总长，浏览器据此算时长并提供拖动。
+    sendRange(req, res, file, 206, 0, size - 1, total, mime);
   }
   return true;
 }

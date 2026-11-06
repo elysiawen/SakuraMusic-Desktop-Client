@@ -45,6 +45,9 @@ const platformLoading = computed(() =>
 const skeletonVisible = useDelayedLoading(platformLoading);
 
 onMounted(async () => {
+  // 绑定状态只有自己进过账户中心才会被加载；冷启动直奔音乐库时 store 是空的，
+  // 会误显「去绑定」。这里先把凭据状态拉齐再定来源——失败也不挡，按未绑定展示。
+  await Promise.all([library.loadCredentials(), library.loadLocalBound()]).catch(() => undefined);
   source.value = boundPlatforms.value[0] ?? null;
   await reloadPlatform();
 });

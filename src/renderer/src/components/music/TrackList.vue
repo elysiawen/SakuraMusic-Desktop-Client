@@ -129,6 +129,11 @@ function playAt(at: number): void {
   transport.playTrack(track, props.tracks);
 }
 
+/** 行尾平台圆点的悬停说明：合并曲目会列出全部来源。 */
+function sourcesTitle(track: UnifiedTrack): string {
+  return track.sources.map((source) => platformName(source.platform)).join(' / ');
+}
+
 function playAll(): void {
   transport.playList(props.tracks);
 }
@@ -229,13 +234,23 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
           <span v-else class="row-album">{{ track.album.name }}</span>
 
           <span class="row-tags">
-            <span v-for="source in track.sources" :key="`${source.platform}-${source.id}`" class="tag">
-              {{ platformName(source.platform) }}
-            </span>
             <span v-if="trackQualityLabel(track)" class="tag">{{ trackQualityLabel(track) }}</span>
           </span>
 
           <span class="row-time">{{ formatTime(track.durationMs / 1000) }}</span>
+
+          <!--
+            平台来源用彩色圆点标注：跨平台合并的曲目会有多个点
+            （网易云红 / QQ 绿），一眼看出这首歌在哪些平台存在。
+          -->
+          <span class="row-sources" :title="sourcesTitle(track)">
+            <span
+              v-for="source in track.sources"
+              :key="`${source.platform}-${source.id}`"
+              class="source-dot"
+              :class="`dot-${source.platform}`"
+            />
+          </span>
         </div>
 
         <!-- 所有列表的行尾都是同一套：收藏 + 三点更多；移除、加入歌单等都收在菜单里。 -->
@@ -356,7 +371,9 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
   display: grid;
   flex: 1;
   min-width: 0;
-  grid-template-columns: 26px 40px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 112px) 42px;
+  grid-template-columns:
+    26px 40px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 112px) 42px
+    46px;
   align-items: center;
   gap: 12px;
   padding: 7px 10px;
@@ -369,7 +386,9 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
  * 歌名被挤进 40px 的封面列、专辑占掉歌名那一列，看起来就是「歌名和专辑叠在一起」。
  */
 .row-main.no-cover {
-  grid-template-columns: 26px minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 112px) 42px;
+  grid-template-columns:
+    26px minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 112px) 42px
+    46px;
 }
 
 .row-index {
@@ -497,6 +516,30 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
   text-align: right;
 }
 
+/* 平台来源圆点列：定宽、靠右，多个来源横向排开 */
+.row-sources {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.source-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.source-dot.dot-netease {
+  background: #e0413f;
+}
+
+.source-dot.dot-qq {
+  background: #3cc77f;
+}
+
 .row-actions {
   display: flex;
   flex: none;
@@ -522,7 +565,11 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
 
 @media (max-width: 1080px) {
   .row-main {
-    grid-template-columns: 24px 40px minmax(0, 1fr) auto 42px;
+    grid-template-columns: 24px 40px minmax(0, 1fr) auto 42px 46px;
+  }
+
+  .row-main.no-cover {
+    grid-template-columns: 24px minmax(0, 1fr) auto 42px 46px;
   }
 
   .row-album {

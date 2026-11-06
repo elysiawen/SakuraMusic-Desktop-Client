@@ -1,7 +1,7 @@
 import type { Component } from 'vue';
 import ImmersiveMode from './ImmersiveMode.vue';
 import ClassicMode from './ClassicMode.vue';
-import MistMode from './MistMode.vue';
+import NebbiaMode from './NebbiaMode.vue';
 
 /**
  * 全屏播放页（Now Playing）的样式注册表。
@@ -37,11 +37,11 @@ export const NOW_PLAYING_MODES: NowPlayingModeDef[] = [
     component: ImmersiveMode,
   },
   {
-    id: 'mist',
+    id: 'nebbia',
     name: '雾笺',
     icon: 'droplet',
     hint: '雨夜车窗 · 指尖按笔顺写歌词 · 雨点随歌声打窗',
-    component: MistMode,
+    component: NebbiaMode,
   },
 ];
 

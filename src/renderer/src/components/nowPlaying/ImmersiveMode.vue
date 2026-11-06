@@ -685,18 +685,20 @@ onBeforeUnmount(() => {
               <AppIcon :name="player.muted || player.volume === 0 ? 'mute' : 'volume'" :size="19" />
             </button>
             <div class="volume-pop">
-              <input
-                class="range volume-range"
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                :value="volumePercent"
-                :style="{ '--fill': `${volumePercent}%` }"
-                aria-label="音量"
-                @input="onVolumeInput"
-              />
-              <span class="volume-value">{{ volumePercent }}</span>
+              <div class="volume-pop-inner">
+                <input
+                  class="range volume-range"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  :value="volumePercent"
+                  :style="{ '--fill': `${volumePercent}%` }"
+                  aria-label="音量"
+                  @input="onVolumeInput"
+                />
+                <span class="volume-value">{{ volumePercent }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -1119,21 +1121,45 @@ onBeforeUnmount(() => {
 
 /* ------------------------------ 底部控制 ------------------------------ */
 
+/*
+ * 控制条 = 右下角一张玻璃卡片（与雾笺浮块同一材质）：进度条在上、
+ * 按键居中、快捷键提示以发丝线分隔收尾。空闲时半透并微微下沉，
+ * 把舞台让给大字歌词；悬停或焦点进入即浮起恢复。
+ */
 .immersive-controls {
-  position: relative;
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
   z-index: 3;
   display: flex;
+  width: 320px;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 10px;
-  padding: 0 8vw 22px;
+  padding: 14px 16px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 16px);
+  background: var(--surface-strong);
+  box-shadow: var(--shadow-lg);
+  opacity: 0.55;
+  transform: translateY(4px);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.25);
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s var(--ease);
+}
+
+.immersive-controls:hover,
+.immersive-controls:focus-within {
+  opacity: 1;
+  transform: none;
 }
 
 .progress-row {
   display: flex;
-  width: min(720px, 100%);
+  width: 100%;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .time {
@@ -1146,6 +1172,7 @@ onBeforeUnmount(() => {
 
 .transport {
   display: flex;
+  width: 100%;
   align-items: center;
   justify-content: center;
   gap: 12px;
@@ -1198,7 +1225,7 @@ onBeforeUnmount(() => {
 
 .range {
   flex: 1;
-  height: 6px;
+  height: 4px;
   appearance: none;
   border-radius: 999px;
   background-image:
@@ -1210,6 +1237,12 @@ onBeforeUnmount(() => {
     100% 100%;
   cursor: pointer;
   outline: none;
+  transition: height 0.18s ease;
+}
+
+/* 进度条平时 4px 细线，悬停整行时加粗到 6px，配合 thumb 浮现 */
+.progress-row:hover .range {
+  height: 6px;
 }
 
 .range:disabled {
@@ -1240,47 +1273,36 @@ onBeforeUnmount(() => {
 }
 
 .volume {
-  position: relative;
   display: flex;
   align-items: center;
 }
 
+/*
+ * 音量条在按键行内向右展开（与雾笺同一套）：不再是浮层，而是音量按钮
+ * 右侧的一段 0fr→1fr 行内容器，展开时整排按键自然左移。
+ */
 .volume-pop {
-  position: absolute;
-  bottom: calc(100% + 14px);
-  left: 50%;
+  display: grid;
+  grid-template-columns: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-columns 0.25s var(--ease),
+    opacity 0.2s ease;
+}
+
+.volume-pop-inner {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-strong);
-  backdrop-filter: blur(var(--glass-blur));
-  box-shadow: var(--shadow-lg);
-  opacity: 0;
-  visibility: hidden;
-  transform: translate(-50%, 8px);
-  transition:
-    opacity 0.2s ease,
-    transform 0.2s ease,
-    visibility 0.2s;
-}
-
-.volume-pop::after {
-  position: absolute;
-  right: 0;
-  bottom: -14px;
-  left: 0;
-  height: 14px;
-  content: '';
+  overflow: hidden;
 }
 
 .volume:hover .volume-pop,
+.volume:focus-within .volume-pop,
 .volume-pop:hover {
+  grid-template-columns: 1fr;
   opacity: 1;
-  visibility: visible;
-  transform: translate(-50%, 0);
 }
 
 .volume-range {
@@ -1299,8 +1321,11 @@ onBeforeUnmount(() => {
 .lyric-hints {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
   color: var(--text-faint);
   font-size: 11px;
 }

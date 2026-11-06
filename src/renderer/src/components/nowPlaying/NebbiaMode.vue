@@ -167,17 +167,25 @@ const song = computed(() => ({
 
 const hostRef = ref<HTMLElement | null>(null);
 const failed = ref(false);
+/** 首个 WebGL 帧渲染出来之前为 true——这期间画布是黑的，用加载动画盖住。 */
+const booting = ref(false);
+/** 首帧已渲染：画布自身淡入+轻微拉远的入场由它驱动，避免「突然亮灯」。 */
+const live = ref(false);
 let runtime: NebbiaRuntime | null = null;
 
 function destroyRuntime(): void {
   runtime?.destroy();
   runtime = null;
+  booting.value = false;
+  live.value = false;
 }
 
 function createRuntime(): void {
   const host = hostRef.value;
   if (!host) return;
   destroyRuntime();
+  booting.value = true;
+  live.value = false;
   try {
     runtime = new NebbiaRuntime(
       {
@@ -187,8 +195,12 @@ function createRuntime(): void {
         glass: 'rain',
         currentTime: { get: () => player.preciseTime() },
         vocal: { get: () => sampleVocal() },
-        onFirstFrame: () => {},
+        onFirstFrame: () => {
+          booting.value = false;
+          live.value = true;
+        },
         onFailed: () => {
+          booting.value = false;
           failed.value = true;
         },
         // 上下文丢了又回来：整个运行时重建（纹理、着色器都要重来）
@@ -372,10 +384,19 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Transition name="mist">
+  <Transition name="nebbia">
     <div v-if="ui.lyricsOpen && track" class="mist-overlay">
       <!-- 雾笺的画布由运行时挂进这个宿主（WebGL2；街景、雾、字全在里面） -->
-      <div ref="hostRef" class="nebbia-host" aria-hidden="true" />
+      <div ref="hostRef" class="nebbia-host" :class="{ live }" aria-hidden="true" />
+      <!-- 冷启动：着色器/笔顺数据加载期间画布是黑的，用呼吸水滴盖住，首帧渲染后淡出 -->
+      <Transition name="boot">
+        <div v-if="booting && !failed" class="nebbia-boot" aria-hidden="true">
+          <span class="boot-mark">
+            <AppIcon name="droplet" :size="24" />
+          </span>
+          <span class="boot-text">雾气凝结中</span>
+        </div>
+      </Transition>
       <!-- WebGL2 不可用时的兜底：只显示当前这句 -->
       <div v-if="failed" class="nebbia-fallback">{{ fallbackText }}</div>
 
@@ -567,9 +588,23 @@ onBeforeUnmount(() => {
 
 /* ------------------------------ 雾笺宿主与兜底 ------------------------------ */
 
+/*
+ * 画布入场：首帧渲染前透明且略微放大；首帧一到，与加载层的淡出交叠，
+ * 缓慢淡入并拉远到位——雨夜街景是「亮」出来的，不是跳出来的。
+ */
 .nebbia-host {
   position: absolute;
   inset: 0;
+  opacity: 0;
+  transform: scale(1.03);
+  transition:
+    opacity 0.9s ease 0.1s,
+    transform 1.4s var(--ease) 0.1s;
+}
+
+.nebbia-host.live {
+  opacity: 1;
+  transform: none;
 }
 
 .nebbia-fallback {
@@ -1115,17 +1150,105 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
+/* ------------------------------ 冷启动加载动画 ------------------------------ */
+
+/*
+ * 首个 WebGL 帧渲染前盖住黑画布：一滴呼吸的水 + 两圈扩散涟漪。
+ * 首帧一到即淡出（boot 过渡），不挡交互。
+ */
+.nebbia-boot {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: rgba(255, 255, 255, 0.72);
+  pointer-events: none;
+}
+
+.boot-mark {
+  position: relative;
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  animation: boot-breathe 1.8s var(--ease) infinite;
+}
+
+.boot-mark::before,
+.boot-mark::after {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 50%;
+  animation: boot-ripple 2.2s ease-out infinite;
+  content: '';
+}
+
+.boot-mark::after {
+  animation-delay: 1.1s;
+}
+
+.boot-text {
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em; /* letter-spacing 末位也占宽，补回视觉居中 */
+  opacity: 0.65;
+}
+
+@keyframes boot-ripple {
+  0% {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+  25% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
+@keyframes boot-breathe {
+  0%,
+  100% {
+    opacity: 0.65;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+.boot-enter-active {
+  transition: opacity 0.25s ease;
+}
+
+.boot-leave-active {
+  transition: opacity 0.45s ease;
+}
+
+.boot-enter-from,
+.boot-leave-to {
+  opacity: 0;
+}
+
 /* ------------------------------ 过渡 ------------------------------ */
 
-.mist-enter-active,
-.mist-leave-active {
+.nebbia-enter-active,
+.nebbia-leave-active {
   transition:
     opacity 0.32s ease,
     transform 0.32s ease;
 }
 
-.mist-enter-from,
-.mist-leave-to {
+.nebbia-enter-from,
+.nebbia-leave-to {
   opacity: 0;
   transform: scale(1.02);
 }
