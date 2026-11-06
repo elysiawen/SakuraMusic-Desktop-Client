@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
 import ErrorState from '@/components/common/ErrorState.vue';
 import GridSkeleton from '@/components/skeleton/GridSkeleton.vue';
+import RadioCard from '@/components/common/RadioCard.vue';
 import RailSkeleton from '@/components/skeleton/RailSkeleton.vue';
 import type {
   DiscoverSection,
@@ -12,10 +13,12 @@ import type {
   PlaylistSummary,
   UnifiedTrack,
 } from '@/api/types';
+import { PLATFORMS } from '@/api/types';
 import { useDelayedLoading } from '@/composables/useDelayedLoading';
 import { useTransport } from '@/composables/useTransport';
 import { useHomeStore } from '@/stores/home';
 import { usePlayerStore } from '@/stores/player';
+import { usePreferencesStore } from '@/stores/preferences';
 import { cachedImage } from '@/utils/cacheImage';
 import { platformName } from '@/utils/format';
 import { isTrack } from '@/utils/track';
@@ -33,6 +36,7 @@ interface FeedSection {
 const player = usePlayerStore();
 const transport = useTransport();
 const home = useHomeStore();
+const preferences = usePreferencesStore();
 const router = useRouter();
 
 // 推荐流缓存在 store 里：进出主页不重新请求，只有点「刷新」才强拉。
@@ -55,12 +59,38 @@ const sections = computed<FeedSection[]>(() =>
 
 const feedErrors = computed(() => feed.value?.errors ?? []);
 
-/** 跟 web 端一致：歌曲类板块走横向轨道，歌单/榜单走卡片网格，不要混在一起平铺。 */
+/**
+ * 电台板块不再走横向轨道，改成顶部并排的两张大卡片。
+ * 卡片只把第一首画成封面，但整批会原样入队按顺序放完；最后一首开始播时才去补下一小批。
+ */
+const RADIO_SECTION_BY_PLATFORM: Record<Platform, string> = {
+  netease: 'netease-fm',
+  qq: 'qq-guess',
+};
+const RADIO_SECTION_KEYS = new Set(Object.values(RADIO_SECTION_BY_PLATFORM));
+
+/** 其余的曲目板块继续用轨道展示（电台板块已被 radioCards 拿走）。 */
 const trackSections = computed(() =>
-  sections.value.filter((section) => section.kind === 'tracks' && section.tracks.length > 0),
+  sections.value.filter(
+    (section) => section.kind === 'tracks' && section.tracks.length > 0 && !RADIO_SECTION_KEYS.has(section.key),
+  ),
 );
+
 const collectionSections = computed(() =>
   sections.value.filter((section) => section.kind !== 'tracks' && section.collections.length > 0),
+);
+
+/**
+ * 卡片按平台渲染，但**跳过总开关关掉的平台**（电台和播放一样，平台关了就不该参与）。
+ * 没绑定账号 / 没开 discover 能力时对应的板块会缺失（只有占位封面），但入口仍在。
+ */
+const radioCards = computed(() =>
+  PLATFORMS.filter((platform) => preferences.isPlatformEnabled(platform)).map((platform) => ({
+    platform,
+    section: (feed.value?.sections ?? []).find(
+      (item) => item.key === RADIO_SECTION_BY_PLATFORM[platform],
+    ),
+  })),
 );
 const isEmpty = computed(
   () =>
@@ -127,6 +157,16 @@ onMounted(async () => {
       <RailSkeleton />
       <GridSkeleton :count="6" />
     </template>
+
+    <!-- 电台入口：发现页已经取回来的私人 FM / 猜你喜欢，整批入队自动续播 -->
+    <div v-if="!loading && !error" class="radio-grid">
+      <RadioCard
+        v-for="card in radioCards"
+        :key="card.platform"
+        :platform="card.platform"
+        :section="card.section"
+      />
+    </div>
 
     <section v-if="isEmpty" class="empty-feed">
       <span class="empty-disc"><AppIcon name="music" :size="26" :stroke-width="1.3" /></span>
@@ -213,6 +253,20 @@ onMounted(async () => {
   max-width: 1180px;
   margin: 0 auto;
   animation: fade-up var(--dur-slow) var(--ease);
+}
+
+.radio-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 760px) {
+  .radio-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
 }
 
 .hero-button {

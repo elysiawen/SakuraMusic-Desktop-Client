@@ -378,6 +378,7 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
   gap: 12px;
   padding: 7px 10px;
   text-align: left;
+  cursor: pointer;
 }
 
 /*

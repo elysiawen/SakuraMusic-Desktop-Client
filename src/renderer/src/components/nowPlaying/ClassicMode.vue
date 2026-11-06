@@ -59,6 +59,8 @@ const containerRef = ref<HTMLElement | null>(null);
 const lineRefs = ref<HTMLElement[]>([]);
 /** 用户手动滚动后的一段时间内暂停自动跟随（毫秒时间戳）。 */
 let manualScrollUntil = 0;
+/** 刚打开/切模式/切歌后的一小段时间，所有 scroll 都用 instant（不等 smooth 动画）。 */
+let instantScrollUntil = 0;
 
 /** 距当前行越远越淡，形成聚焦式的层次。 */
 function lineOpacity(index: number): number {
@@ -104,35 +106,45 @@ function tick(): void {
   }
 }
 
-/** 让当前行落在容器约 36% 高度处，而不是生硬地居中。 */
-function scrollToActive(index: number): void {
+/** 让当前行落在容器约 36% 高度处。 */
+function scrollToActive(index: number, instant = false): void {
   const container = containerRef.value;
   const element = lineRefs.value[index];
   if (!container || !element) return;
   const top = element.offsetTop - container.clientHeight * 0.36 + element.clientHeight / 2;
-  container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  const behavior: ScrollBehavior = instant ? 'auto' : 'smooth';
+  container.scrollTo({ top: Math.max(0, top), behavior });
 }
 
 function onUserScroll(): void {
   manualScrollUntil = Date.now() + 4000;
 }
 
+function doInitialScroll(): void {
+  manualScrollUntil = 0;
+  // 接下来 1.5 秒内所有自动 scroll 都用 instant，覆盖「歌词还没 ready」的那次 scroll。
+  instantScrollUntil = Date.now() + 1500;
+  const container = containerRef.value;
+  const lines = lineRefs.value;
+  const idx = activeIndex.value;
+  if (!container || idx < 0 || !lines[idx]) return;
+  const el = lines[idx];
+  container.scrollTop = Math.max(0, el.offsetTop - container.clientHeight * 0.36);
+}
+
 watch(activeIndex, (index) => {
   if (!ui.lyricsOpen || index < 0 || Date.now() < manualScrollUntil) return;
-  void nextTick(() => scrollToActive(index));
+  const instant = Date.now() < instantScrollUntil;
+  void nextTick(() => scrollToActive(index, instant));
 });
 
-// 打开或切歌时直接定位（不做平滑滚动，避免一次长距离动画）。
+// 打开 / 切歌时直接定位（瞬间 scroll）。
+// 注意：切 nowPlayingMode 不经过这里（watch 注册时模式已就位，抓不到变化），走 onMounted。
 watch([() => ui.lyricsOpen, () => track.value?.key], async ([open]) => {
   if (!open) return;
-  manualScrollUntil = 0;
   lineRefs.value = [];
   await nextTick();
-  const container = containerRef.value;
-  const element = lineRefs.value[activeIndex.value];
-  if (container && element) {
-    container.scrollTop = Math.max(0, element.offsetTop - container.clientHeight * 0.36);
-  }
+  doInitialScroll();
 });
 
 /* ------------------------------ 传输控制 ------------------------------ */
@@ -233,6 +245,9 @@ function onKeydown(event: KeyboardEvent): void {
 onMounted(() => {
   window.addEventListener('keydown', onKeydown);
   rafId = requestAnimationFrame(tick);
+  // 切模式时 ClassicMode 是新挂载的，watch 注册时机晚于模式变化本身，
+  // 所以初始化定位必须在 onMounted 里做。两轮 nextTick 确保 Transition + 动态 ref 绑定就绪。
+  nextTick(() => nextTick(() => doInitialScroll()));
 });
 
 onBeforeUnmount(() => {

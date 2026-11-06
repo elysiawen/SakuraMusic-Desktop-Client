@@ -1,6 +1,7 @@
 import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { musicApi } from '@/api';
+import { usePreferencesStore } from '@/stores/preferences';
 import {
   PREMIUM_QUALITIES,
   QUALITY_LABEL,
@@ -33,10 +34,31 @@ interface PersistedPlayerState {
   queue?: UnifiedTrack[];
   index?: number;
   position?: number;
+  /** 上次的电台现场：刷新后还能接着自动续歌（服务端会话丢了会自动新建一个）。 */
+  radio?: { platform: Platform; session: string; hasMore: boolean };
+}
+
+/** 正在听的电台（私人 FM / QQ 猜你喜欢）。它不是一份歌单，而是会不断往下补的流。 */
+export interface RadioState {
+  platform: Platform;
+  /** 网关的电台会话号：服务端据此记住「已经推过哪些歌」。 */
+  session: string;
+  /** 正在请求下一批，挡住 timeupdate 每 250ms 一拍的并发请求。 */
+  loading: boolean;
+  /** 电台流是否仍激活（只有 stopRadio 会结束）；空批次不关闭电台，改用冷却重试。 */
+  hasMore: boolean;
 }
 
 const STORAGE_KEY = 'sakura.player';
+/** 落盘保留的队列上限（Android 端的 PlaybackSessionStore 用的是同一个数）。 */
 const MAX_PERSISTED_QUEUE = 200;
+/**
+ * 只剩最后一首时才补下一批：首页那 3 首（QQ 是 5 首）要按顺序放完，
+ * 别刚点开就打请求。留一整首歌的时间给网络，足够接上、不会断歌。
+ */
+const RADIO_REFILL_AHEAD = 0;
+/** 续播失败后的冷却：别让 timeupdate 每 250ms 就重试一次，把上游打进风控。 */
+const RADIO_RETRY_MS = 20_000;
 
 export const PLAY_QUALITIES = QUALITY_ORDER;
 
@@ -123,6 +145,8 @@ export const usePlayerStore = defineStore('player', () => {
    *
    * 房间里「下一首放什么」由服务端权威决定（顺序/循环/单曲/随机都在房间的 mode 里），
    * 本机自行切歌只会和房间状态打架。
+   *
+   * **非空 = 房间真的接管了本机播放**，可以用来挡住电台续播。
    */
   let roomEndedHook: ((endedKey: string) => void) | null = null;
   /**
@@ -134,6 +158,17 @@ export const usePlayerStore = defineStore('player', () => {
   let sharedSourceProvider: SharedSourceProvider | null = null;
   /** 共享地址播放失败时的回落地址（本机账号解析出来的那条）。 */
   let sharedFallback: string | null = null;
+
+  /** 非空 = 这份队列是电台流，快见底时会自动续歌，且不循环回旧歌。 */
+  const radio = ref<RadioState | null>(null);
+  /** 上次发起续播的时刻；成功清零，失败留作冷却。 */
+  let radioRetryAt = 0;
+  /** 续播提示的节流：timeupdate 每 250ms 一拍，别把 toast 刷屏。 */
+  let radioErrorAt = 0;
+  /** 正在进行的续播；点「下一首」时若在途就复用它，别重复发也别直接停。 */
+  let radioInFlight: Promise<number> | null = null;
+  /** 已经播到队尾、正在等续播：补歌回来后要自动接着播，否则会停在最后一首。 */
+  let radioTailStopped = false;
 
   const queue = ref<UnifiedTrack[]>([]);
   const index = ref(-1);
@@ -210,6 +245,18 @@ export const usePlayerStore = defineStore('player', () => {
     if (restored) duration.value = restored.durationMs / 1000;
   }
 
+  // 电台现场跟着队列一起回来：队列里的歌还在，快放完时就能接着自动续。
+  if (persisted.radio?.platform && Array.isArray(persisted.queue) && persisted.queue.length > 0) {
+    radio.value = {
+      platform: persisted.radio.platform,
+      session: persisted.radio.session ?? '',
+      loading: false,
+      // 旧版本可能往 localStorage 里存过 hasMore: false；电台是否激活只看它是否存在，
+      // 刷新后一律按「还能续」恢复，别让历史数据把电台钉死。
+      hasMore: true,
+    };
+  }
+
   function persist(): void {
     // 房间里播放器装的是房间队列：写下去等于把用户的个人现场覆盖掉。
     if (persistencePaused) return;
@@ -225,6 +272,13 @@ export const usePlayerStore = defineStore('player', () => {
       queue: capped.queue,
       index: capped.index,
       position: currentTime.value,
+      radio: radio.value
+        ? {
+            platform: radio.value.platform,
+            session: radio.value.session,
+            hasMore: radio.value.hasMore,
+          }
+        : undefined,
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -331,6 +385,8 @@ export const usePlayerStore = defineStore('player', () => {
     element.volume = volume.value;
 
     element.addEventListener('timeupdate', () => {
+      // 电台续播按「队列还剩几首」判断，与音频进度无关，解析新地址期间也照常检查。
+      maybeRefill();
       if (resolvingSource) return;
       currentTime.value = element.currentTime;
       persistSoon();
@@ -772,6 +828,8 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function playTrack(track: UnifiedTrack, list?: UnifiedTrack[]): Promise<void> {
+    // 单独点一首 / 换一张列表都是明确的新意图，电台流到此结束。
+    stopRadio();
     if (list && list.length > 0) {
       queue.value = [...list];
       index.value = Math.max(
@@ -793,6 +851,8 @@ export const usePlayerStore = defineStore('player', () => {
 
   async function playQueue(list: UnifiedTrack[], startIndex = 0): Promise<void> {
     if (list.length === 0) return;
+    // 用户明确换了队列，电台流到此为止；否则会一直往别人的歌单后面追加电台歌。
+    stopRadio();
     queue.value = [...list];
     index.value = Math.min(Math.max(0, startIndex), list.length - 1);
     pendingSeek = 0;
@@ -814,14 +874,37 @@ export const usePlayerStore = defineStore('player', () => {
   async function next(auto = false): Promise<void> {
     if (queue.value.length === 0) return;
 
-    if (shuffle.value && queue.value.length > 1) {
+    // 电台是「一路往前」的流：随机跳回听过的歌、或列表循环绕回开头都不合语义。
+    const endlessRadio = Boolean(radio.value);
+    let moved = false;
+    if (!endlessRadio && shuffle.value && queue.value.length > 1) {
       let at = index.value;
       while (at === index.value) at = Math.floor(Math.random() * queue.value.length);
       index.value = at;
+      moved = true;
     } else if (index.value < queue.value.length - 1) {
       index.value += 1;
+      moved = true;
+    } else if (endlessRadio) {
+      /*
+       * 电台撞到队尾：通常是提前续播还没回来（网络慢、或用户连点下一首）。
+       * 只要还在电台模式就再要一批 —— 不因之前某次失败/空批次而放弃。
+       * refillRadio 会复用在途请求，所以这里能等到那批补歌的结果。
+       */
+      const added = await refillRadio(true);
+      if (added > 0 && index.value < queue.value.length - 1) {
+        index.value += 1;
+        moved = true;
+      } else {
+        // 续播还在路上（或刚失败进入冷却）：记住这个位置，补歌回来自动接着播。
+        radioTailStopped = true;
+        pause();
+        seek(0);
+        return;
+      }
     } else if (repeat.value === 'all' || !auto) {
       index.value = 0;
+      moved = true;
     } else {
       pause();
       seek(0);
@@ -831,7 +914,7 @@ export const usePlayerStore = defineStore('player', () => {
     pendingSeek = 0;
     currentTime.value = 0;
     duration.value = 0;
-    await start();
+    if (moved) await start();
   }
 
   async function prev(): Promise<void> {
@@ -864,6 +947,8 @@ export const usePlayerStore = defineStore('player', () => {
 
   function pause(): void {
     const element = ensureAudio();
+    // 明确暂停 = 不想听：队尾等续播的那次自动接上也一并撤掉。
+    radioTailStopped = false;
     if (!element.paused) element.pause();
   }
 
@@ -1042,6 +1127,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function clearQueue(): void {
+    stopRadio();
     const element = ensureAudio();
     element.pause();
     element.removeAttribute('src');
@@ -1060,6 +1146,163 @@ export const usePlayerStore = defineStore('player', () => {
     persist();
   }
 
+  /* ------------------------------ 电台续播 ------------------------------ */
+
+  /** 房间是否真的接管了本机播放（桌面端语义：roomEndedHook 存在 = 席位占着）。 */
+  function roomControlsPlayback(): boolean {
+    return Boolean(roomEndedHook);
+  }
+
+  function stopRadio(): void {
+    radio.value = null;
+    radioRetryAt = 0;
+    radioTailStopped = false;
+  }
+
+  /** 向网关要一批：`reset` 表示新开一个电台，否则带上会话号与当前队列的 key 去重。 */
+  async function fetchRadio(
+    options: { reset?: boolean; exclude?: string[] } = {},
+  ): Promise<UnifiedTrack[]> {
+    const state = radio.value;
+    if (!state || state.loading) return [];
+    radio.value = { ...state, loading: true };
+    try {
+      const batch = await musicApi.radio(
+        state.platform,
+        options.reset ? undefined : state.session || undefined,
+        6,
+        options.exclude ?? [],
+      );
+      if (radio.value && radio.value.platform === state.platform) {
+        radio.value = {
+          platform: batch.platform,
+          session: batch.session,
+          loading: false,
+          /*
+           * 网关的 hasMore 只说明「这一批有没有拿到新歌」，不是电台流的开关：
+           * 上游把听过的歌又推一遍很常见，采信它会让一次抖动永久停播。
+           * 电台流只由 stopRadio()（用户换歌单）结束，空批次交给冷却重试。
+           */
+          hasMore: true,
+        };
+      }
+      return batch.items;
+    } catch (error) {
+      radioRetryAt = Date.now();
+      if (radio.value && radio.value.platform === state.platform) {
+        radio.value = { ...state, loading: false };
+      }
+      // 续播失败不弹 toast（timeupdate 每 250ms 一拍会刷屏），留日志、冷却后自动重试；
+      // 首次接入失败则要说清楚为什么没歌。
+      if (options.reset) {
+        toast.error(error instanceof Error ? error.message : '电台接入失败');
+      } else {
+        console.warn('[sakura] 电台续播失败，稍后重试', error);
+        if (Date.now() - radioErrorAt > 60_000) {
+          radioErrorAt = Date.now();
+          const reason = error instanceof Error ? error.message : '未知错误';
+          toast.error(`电台续播失败：${reason}；请确认网关已重启，或点「下一首」重试`);
+        }
+      }
+      return [];
+    }
+  }
+
+  /**
+   * 开始听一个平台的电台。
+   *
+   * `initialTracks` 是首页卡片背后那一整批（网易云私人 FM 3 首、QQ 猜你喜欢 5 首）：
+   * 发现页已经把它们取回来了，卡片只是把第一首画成封面。直接整批入队、按顺序放完，
+   * **点开时一次电台请求都不打**；等最后一首开始播了，再由 maybeRefill 去要下一批。
+   */
+  async function startRadio(
+    platform: Platform,
+    initialTracks: UnifiedTrack[] = [],
+  ): Promise<UnifiedTrack[]> {
+    stopRadio();
+    radio.value = { platform, session: '', loading: false, hasMore: true };
+
+    let list = [...initialTracks];
+    if (list.length === 0) {
+      list = await fetchRadio({ reset: true });
+      if (list.length === 0) {
+        stopRadio();
+        return [];
+      }
+    }
+    // 刻意不经过 playQueue：那会清掉刚建立的电台状态（只有用户主动换歌单才该清）。
+    queue.value = [...list];
+    index.value = 0;
+    pendingSeek = 0;
+    currentTime.value = 0;
+    duration.value = 0;
+    await start();
+    toast.success('私人电台已开始，快听完时会自动续歌');
+    return list;
+  }
+
+  async function doRefill(force: boolean): Promise<number> {
+    const state = radio.value;
+    if (!state || roomControlsPlayback()) return 0;
+    if (!force && Date.now() - radioRetryAt < RADIO_RETRY_MS) return 0;
+    const items = await fetchRadio({ exclude: queue.value.map((item) => item.key) });
+    if (!radio.value || radio.value.platform !== state.platform) return 0;
+
+    const existing = new Set(queue.value.map((item) => item.key));
+    const fresh = items.filter((item) => !existing.has(item.key));
+    if (fresh.length > 0) {
+      queue.value = [...queue.value, ...fresh];
+      radioRetryAt = Date.now();
+      // 之前已经播到队尾停下了：补歌到了就自动接上，不等用户再点一下。
+      if (radioTailStopped) {
+        radioTailStopped = false;
+        pendingSeek = 0;
+        currentTime.value = 0;
+        duration.value = fresh[0]?.durationMs ? fresh[0].durationMs / 1000 : 0;
+        await start();
+      }
+    } else {
+      radioRetryAt = Date.now();
+      console.warn('[sakura] 电台续播：这次没拿到新歌，稍后重试');
+      if (Date.now() - radioErrorAt > 60_000) {
+        radioErrorAt = Date.now();
+        toast.error('电台这批没有新歌，稍后会自动重试；也可以点「下一首」立即再试');
+      }
+      // 停在队尾时 playing=false，音频事件和队列 watch 都不会再触发，
+      // 光靠「稍后自动重试」根本等不来。这里显式排一次延时重试。
+      if (index.value >= queue.value.length - 1) {
+        setTimeout(() => {
+          if (radio.value) void refillRadio(true);
+        }, RADIO_RETRY_MS);
+      }
+    }
+    return fresh.length;
+  }
+
+  /** 追加一批新歌；返回实际加进去的条数。在途时复用同一个请求，不重复打上游。 */
+  async function refillRadio(force = false): Promise<number> {
+    if (radioInFlight) return radioInFlight;
+    const pending = doRefill(force);
+    radioInFlight = pending;
+    try {
+      return await pending;
+    } finally {
+      if (radioInFlight === pending) radioInFlight = null;
+    }
+  }
+
+  /** 最后一首开始播了才补下一批。 */
+  function maybeRefill(): void {
+    const state = radio.value;
+    if (!state || state.loading || roomControlsPlayback()) return;
+    if (Date.now() - radioRetryAt < RADIO_RETRY_MS) return;
+    if (index.value < 0 || queue.value.length === 0) return;
+    if (queue.value.length - 1 - index.value > RADIO_REFILL_AHEAD) return;
+    radioRetryAt = Date.now();
+    console.info(`[sakura] 电台续播触发：${state.platform}，队列剩 ${queue.value.length - 1 - index.value} 首`);
+    void refillRadio(true);
+  }
+
   watch(playing, (value) => {
     if ('mediaSession' in navigator) {
       navigator.mediaSession.playbackState = value ? 'playing' : 'paused';
@@ -1067,9 +1310,27 @@ export const usePlayerStore = defineStore('player', () => {
   });
 
   watch(
-    () => [queue.value, index.value] as const,
+    () => [queue.value, index.value, radio.value] as const,
     () => persist(),
   );
+
+  /** 正在听的电台平台被关掉时自动停掉，不续了。 */
+  watch(
+    () => usePreferencesStore().enabled,
+    (enabled) => {
+      const current = radio.value;
+      if (current && enabled[current.platform] === false) {
+        stopRadio();
+      }
+    },
+    { deep: true },
+  );
+
+  /*
+   * 队列/下标变化也检查一次续播：暂停在最后一首、跳歌、或 timeupdate 还没来时，
+   * 光靠音频事件会漏掉触发。maybeRefill 自带冷却与在途去重，重复调用没有副作用。
+   */
+  watch([() => queue.value.length, () => index.value], () => maybeRefill());
 
   return {
     queue,
@@ -1131,5 +1392,10 @@ export const usePlayerStore = defineStore('player', () => {
     removeFromQueue,
     removeFromQueueAt,
     clearQueue,
+    /** 当前电台（null = 普通队列）；队列面板可据此显示「自动续播中」。 */
+    radio,
+    startRadio,
+    stopRadio,
+    refillRadio,
   };
 });

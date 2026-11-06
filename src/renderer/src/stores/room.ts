@@ -406,6 +406,16 @@ export const useRoomStore = defineStore('room', () => {
       return;
     }
 
+    /*
+     * 私人电台与一起听互斥：服务端把本机拉进房间（同账号另一台设备刚入房）时，
+     * 电台自动结束。这条路径不经过 create/join/transfer —— 第一帧快照会直接推到这里，
+     * UI 层拦不住。只在「刚进房间」时处理，后续每次快照都触发会反复弹提示。
+     */
+    if (!code.value && radioActive()) {
+      player.stopRadio();
+      toast.info('已进入「一起听」，私人电台已停止', 6000);
+    }
+
     code.value = view.code;
     writeStoredRoom(view.code);
     kind.value = 'duo';
@@ -704,8 +714,23 @@ export const useRoomStore = defineStore('room', () => {
     return deviceId;
   }
 
+  /* -------------------- 与私人电台互斥 -------------------- */
+
+  /** 本机是否正在听私人电台。 */
+  function radioActive(): boolean {
+    return Boolean(player.radio);
+  }
+
+  /** 拦下「进入房间」的动作，并说明原因。 */
+  function radioBlocksRoom(): boolean {
+    if (!radioActive()) return false;
+    toast.error('正在播放私人电台，请先退出电台再使用「一起听」');
+    return true;
+  }
+
   /** 创建房间：带上本机当前队列与模式，一起听从「你现在的歌单」开始。 */
   async function create(): Promise<void> {
+    if (radioBlocksRoom()) return;
     if (joining || active.value) return;
     const deviceId = requireDevice();
     if (!deviceId) return;
@@ -732,6 +757,7 @@ export const useRoomStore = defineStore('room', () => {
   }
 
   async function join(codeRaw: string): Promise<void> {
+    if (radioBlocksRoom()) return;
     const normalized = codeRaw.trim().toUpperCase();
     if (!normalized || joining || active.value) return;
     const deviceId = requireDevice();
@@ -774,6 +800,7 @@ export const useRoomStore = defineStore('room', () => {
    * 就是 `join`：服务端「一个账号只占一个席位」，join 的语义本来就是接席位。
    */
   async function transfer(): Promise<void> {
+    if (radioBlocksRoom()) return;
     const roomCode = code.value;
     const deviceId = devices.selfId;
     if (!roomCode || !deviceId || joining) return;
@@ -842,6 +869,11 @@ export const useRoomStore = defineStore('room', () => {
   async function reconcile(): Promise<void> {
     // 首连的 `hello` 与 selfId 的 watcher 会同时触发一次：重入会让个人现场被暂存两遍。
     if (reconciling || joining || active.value) return;
+    /*
+     * 电台播放中：本次不自动回房（静默，用户没主动点一起听，不该弹提示）。
+     * 房间码仍留在 localStorage，退出电台后下次刷新照样能回去。
+     */
+    if (radioActive()) return;
     const stored = readStoredRoom();
     const deviceId = devices.selfId;
     if (!stored || !deviceId) return;
