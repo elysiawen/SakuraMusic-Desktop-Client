@@ -35,6 +35,24 @@ export function audioCacheKey(platform: string, trackId: string, quality: string
   return `${platform}:${trackId}:${quality}`;
 }
 
+export type AudioCacheState = null | 'partial' | 'full';
+
+/**
+ * 查询一首音频的缓存状态（纯本地磁盘查询，无副作用）。
+ * - null：没有缓存（连文件都没有，或 sidecar 不可信）
+ * - 'partial'：只有前缀，还没完整缓存
+ * - 'full'：完整缓存，下次断网也能播
+ */
+export function queryAudioCacheState(key: string): AudioCacheState {
+  const file = audioFile(key);
+  const meta = readMeta(key);
+  if (!existsSync(file) || meta.total === null || meta.total <= 0) return null;
+  const size = statSync(file).size;
+  if (size > meta.total) return null; // sidecar 比文件还小，不可信
+  if (size >= meta.total) return 'full';
+  return 'partial';
+}
+
 function hash(key: string): string {
   return createHash('sha1').update(key, 'utf8').digest('hex');
 }

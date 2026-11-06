@@ -150,7 +150,16 @@ onBeforeUnmount(() => {
       <div class="app-main">
         <TitleBar />
         <main class="app-content">
-          <RouterView />
+          <RouterView v-slot="{ Component }">
+            <!--
+              只缓存搜索页：用户从搜索跳到歌手主页、再点返回时，搜索词、结果、
+              当前 tab 和分页都要原封不动。其它详情页（artist/album/collection）
+              不在 include 里，照常卸载重建 —— 参数变了本来就要重新拉数据。
+            -->
+            <keep-alive include="SearchView">
+              <component :is="Component" />
+            </keep-alive>
+          </RouterView>
         </main>
       </div>
     </div>

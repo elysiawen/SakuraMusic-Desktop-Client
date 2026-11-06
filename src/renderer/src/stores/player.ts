@@ -11,6 +11,7 @@ import {
   type TrackSource,
   type UnifiedTrack,
 } from '@/api/types';
+import type { AudioCacheState } from '@shared/ipc';
 import { offlineApi } from '@/api/offline';
 import { useToast } from '@/composables/useToast';
 import { cachedImage } from '@/utils/cacheImage';
@@ -156,6 +157,8 @@ export const usePlayerStore = defineStore('player', () => {
   const usingDirect = ref(false);
   /** 当前这一首用的是不是一起听里对方提供的会员地址。 */
   const usingShared = ref(false);
+  /** 当前这一首的本地音频缓存状态：null = 没缓存，'partial' = 前缀，'full' = 完整。 */
+  const audioCache = ref<'full' | 'partial' | null>(null);
 
   const current = computed<UnifiedTrack | null>(() => queue.value[index.value] ?? null);
   const activeSource = computed<TrackSource | null>(() =>
@@ -607,6 +610,7 @@ export const usePlayerStore = defineStore('player', () => {
     actualQuality.value = null;
     // 起播前先摘掉上一首的「共享」标识：解析失败提前返回时，界面不能继续显示它。
     usingShared.value = false;
+    audioCache.value = null; // 重置缓存态，等 BFF resolve 完再查
     sharedFallback = null;
     resolvingSource = true;
     const token = ++loadToken;
@@ -638,6 +642,8 @@ export const usePlayerStore = defineStore('player', () => {
         currentTime.value = offset;
         resolvingSource = false;
 
+        // offline 里的文件都是完整下载的，直接标 full
+        audioCache.value = 'full';
         void loadLyric(source);
         updateMediaSession(track);
 
@@ -682,6 +688,8 @@ export const usePlayerStore = defineStore('player', () => {
         currentTime.value = offset;
         resolvingSource = false;
 
+        // 查 BFF 侧的音频缓存状态（异步，不阻塞播放；token 避免竞态）
+        probeAudioCache(source.platform, source.id, actualQuality.value, token);
         void loadLyric(source);
         updateMediaSession(track);
 
@@ -721,6 +729,7 @@ export const usePlayerStore = defineStore('player', () => {
       currentTime.value = offset;
       resolvingSource = false;
 
+      probeAudioCache(source.platform, source.id, actualQuality.value, token);
       void loadLyric(source);
       updateMediaSession(track);
 
@@ -743,6 +752,23 @@ export const usePlayerStore = defineStore('player', () => {
         resolvingSource = false;
       }
     }
+  }
+
+  /** 异步查本地音频缓存，结果写入 audioCache。token 用于防止上一首的回调覆盖当前首。 */
+  function probeAudioCache(
+    platform: string,
+    trackId: string,
+    quality: string,
+    token: number,
+  ): void {
+    const key = `${platform}:${trackId}:${quality}`;
+    // window.sakura 是 Electron preload 注入的，web 版没有；优雅降级跳过。
+    const api = (window as { sakura?: { cache?: { audioCheck?: (k: string) => Promise<AudioCacheState> } } })
+      .sakura;
+    if (!api?.cache?.audioCheck) return;
+    void api.cache.audioCheck(key).then((state) => {
+      if (token === loadToken) audioCache.value = state;
+    });
   }
 
   async function playTrack(track: UnifiedTrack, list?: UnifiedTrack[]): Promise<void> {
@@ -1069,6 +1095,7 @@ export const usePlayerStore = defineStore('player', () => {
     usingDirect,
     /** 当前这首用的是不是一起听里对方提供的会员地址。 */
     usingShared,
+    audioCache,
     current,
     activeSource,
     progress,

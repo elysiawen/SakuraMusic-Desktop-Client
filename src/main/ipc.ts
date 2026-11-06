@@ -19,6 +19,7 @@ import {
   savePlatformCredential,
 } from './auth/platformVault';
 import { clearCache, getCacheStats, trimCache } from './cache/index';
+import { queryAudioCacheState } from './cache/audio';
 import { clearServer, getConfig, saveConfig, saveServer } from './config/store';
 import { normalizeBaseUrl } from './config/url';
 import { getLyricState, pushLyricState } from './lyric';
@@ -125,6 +126,12 @@ export function registerIpc(context: IpcContext): void {
     else if (CACHE_KINDS.includes(kind as CacheKind)) clearCache(kind as CacheKind);
     return getCacheStats();
   });
+
+  /** 渲染进程查询某首音频的本地缓存状态（磁盘实查，无副作用）。 */
+  ipcMain.handle(
+    'cache:audio-check',
+    (_event, key: string): 'full' | 'partial' | null => queryAudioCacheState(key),
+  );
 
   ipcMain.handle('dialog:choose-directory', async (event): Promise<string | null> => {
     const options: Electron.OpenDialogOptions = {

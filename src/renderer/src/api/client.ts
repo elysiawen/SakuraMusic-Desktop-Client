@@ -28,8 +28,6 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
-const AUTH_PATHS = ['/api/auth/login', '/api/auth/register', '/api/auth/logout'];
-
 function withQuery(path: string, query: RequestOptions['query']): string {
   if (!query) return path;
   const params = new URLSearchParams();
@@ -69,7 +67,10 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     const code = error?.code ?? 'request_failed';
     const message = error?.message ?? `请求失败（${response.status}）`;
 
-    if (response.status === 401 && !AUTH_PATHS.some((item) => path.startsWith(item))) {
+    // 只有服务端明确判定为 unauthorized 的 401 才是会话失效。
+    // 其他 401（比如登录密码错、平台临时流 token 过期、BFF 代理层返回的 401）
+    // 交给各自的调用方去处理，不触发全局登出。
+    if (response.status === 401 && code === 'unauthorized') {
       window.dispatchEvent(new CustomEvent('sakura:auth-expired'));
     }
 

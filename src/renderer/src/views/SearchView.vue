@@ -136,10 +136,18 @@ function openArtist(artist: UnifiedArtist): void {
   void router.push({ name: 'artist', params: { platform: source.platform, id: source.id } });
 }
 
+function openArtistOn(platform: string, id: string): void {
+  void router.push({ name: 'artist', params: { platform, id } });
+}
+
 function openAlbum(album: UnifiedAlbum): void {
   const source = album.sources[0];
   if (!source) return;
   void router.push({ name: 'album', params: { platform: source.platform, id: source.id } });
+}
+
+function openAlbumOn(platform: string, id: string): void {
+  void router.push({ name: 'album', params: { platform, id } });
 }
 
 function openPlaylist(item: PlaylistSummary): void {
@@ -266,6 +274,17 @@ onBeforeUnmount(() => {
         </span>
         <strong :title="artist.name">{{ artist.name }}</strong>
         <small>{{ artist.subtitle ?? `${artist.songCount ?? 0} 首歌曲` }}</small>
+        <span class="source-chips">
+          <button
+            v-for="source in artist.sources"
+            :key="source.platform"
+            type="button"
+            class="source-chip"
+            :class="`chip-${source.platform}`"
+            :title="`进入${platformName(source.platform)}的歌手主页`"
+            @click.stop="openArtistOn(source.platform, source.id)"
+          >{{ platformName(source.platform) }}</button>
+        </span>
       </button>
     </div>
 
@@ -284,6 +303,17 @@ onBeforeUnmount(() => {
         </span>
         <strong :title="album.name">{{ album.name }}</strong>
         <small>{{ album.artists.map((artist) => artist.name).join(' / ') || '未知歌手' }}</small>
+        <span class="source-chips">
+          <button
+            v-for="source in album.sources"
+            :key="source.platform"
+            type="button"
+            class="source-chip"
+            :class="`chip-${source.platform}`"
+            :title="`进入${platformName(source.platform)}的专辑页`"
+            @click.stop="openAlbumOn(source.platform, source.id)"
+          >{{ platformName(source.platform) }}</button>
+        </span>
       </button>
     </div>
 
@@ -500,6 +530,48 @@ onBeforeUnmount(() => {
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 歌手 / 专辑卡片底部的平台胶囊 —— 红底白字 = 网易云，绿底白字 = QQ 音乐。
+   比小圆点直观：一眼就知道这个卡片有哪几个平台、各自叫什么。 */
+.source-chips {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  align-self: flex-end;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.source-chip {
+  height: 18px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 18px;
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    filter var(--dur-fast) var(--ease);
+}
+
+.source-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--bg) 65%, transparent);
+  filter: brightness(1.08);
+}
+
+.source-chip.chip-netease {
+  background: #e0413f;
+  color: #fff;
+}
+
+.source-chip.chip-qq {
+  background: #3cc77f;
+  color: #fff;
 }
 
 /* 曲目行由 TrackList 统一渲染，这里只给分页留白。 */

@@ -1,0 +1,116 @@
+name: Build
+
+on:
+  # 每次推送 master / main 都重新打包，并按「当天日期」发布 Release
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 连续推送时只保留最新一次，避免两个运行同时改同一个 Release
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: package (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 一个平台挂了不要连累其它平台出包
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            artifact: windows
+          - os: macos-latest
+            platform: mac
+            artifact: macos
+          - os: ubuntu-latest
+            platform: linux
+            artifact: linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # 版本号 = 北京时间当天日期（20261106），让安装包文件名和 Release tag 对齐
+      - name: Resolve version
+        id: version
+        run: echo "version=$(TZ=Asia/Shanghai date '+%Y%m%d')" >> "$GITHUB_OUTPUT"
+
+      # 架构矩阵（x64 / arm64）在 electron-builder.yml 里，这里不额外传。
+      # --publish never：产物由下面的 release 作业统一发布，
+      # 避免三个平台同时抢着建同一个 Release。
+      # --config.extraMetadata.version 覆盖 package.json 版本号，
+      # 产物文件名里的版本不再是 0.1.0，而是当天日期。
+      - name: Build and package
+        run: |
+          npm run build
+          npx electron-builder --${{ matrix.platform }} --publish never \
+            --config.extraMetadata.version="${{ steps.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb
+
+  release:
+    name: publish release
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # 版本号 = 北京时间当天日期（20261106），同时生成构建时间与提交号
+      - name: Resolve version
+        id: version
+        run: |
+          echo "version=$(TZ=Asia/Shanghai date '+%Y%m%d')" >> "$GITHUB_OUTPUT"
+          echo "built_at=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S') (UTC+8)" >> "$GITHUB_OUTPUT"
+          echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release notes
+        run: |
+          cat > notes.md <<EOF
+          ## Sakura Music 自动构建
+
+          - **版本号**: ${{ steps.version.outputs.version }}
+          - **构建时间**: ${{ steps.version.outputs.built_at }}
+          - **Commit**: ${{ steps.version.outputs.commit }}
+          EOF
+          cat notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # 同一天多次推送：先删掉当天的旧 Release 和 tag，再按本次提交重建，
+          # 保证 Release 指向最新代码、产物也是最新的一批。
+          gh release delete "$VERSION" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$VERSION" artifacts/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Release ${VERSION}" \
+            --notes-file notes.md

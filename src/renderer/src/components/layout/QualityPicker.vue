@@ -84,11 +84,12 @@ function hintOf(quality: Quality): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}M · ${SPEC[quality]}`;
 }
 
-const footerNote = computed(() =>
-  options.value.some((item) => PREMIUM_QUALITIES.includes(item.value))
-    ? '高清臻音、超清母带、沉浸环绕声需要对应等级的会员，不可用时自动降级'
-    : '不可用的档位会自动降级到能播的那一档',
-);
+const footerNote = computed(() => {
+  const premium = options.value.filter((item) => PREMIUM_QUALITIES.includes(item.value));
+  if (premium.length === 0) return '不可用的档位会自动降级到能播的那一档';
+  const names = premium.map((item) => qualityLabel(item.value, platform.value)).join('、');
+  return `${names}需要对应等级的会员，不可用时自动降级`;
+});
 
 /**
  * 贴着芯片摆好位置。

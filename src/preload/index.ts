@@ -50,6 +50,8 @@ const api: DesktopApi = {
   cache: {
     stats: (): Promise<CacheStats> => ipcRenderer.invoke('cache:stats'),
     clear: (kind?: CacheKind): Promise<CacheStats> => ipcRenderer.invoke('cache:clear', kind),
+    audioCheck: (key: string) =>
+      ipcRenderer.invoke('cache:audio-check', key) as Promise<'full' | 'partial' | null>,
   },
 
   lyric: {

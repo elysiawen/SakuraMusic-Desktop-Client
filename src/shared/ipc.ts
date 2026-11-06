@@ -201,11 +201,15 @@ export interface WindowControlsApi {
   onMaximizedChange: (callback: (maximized: boolean) => void) => () => void;
 }
 
+export type AudioCacheState = 'full' | 'partial' | null;
+
 export interface CacheApi {
   /** 读取四类缓存的占用与条目数。 */
   stats: () => Promise<CacheStats>;
   /** 清理某一类；不传 kind 时清理全部缓存。 */
   clear: (kind?: CacheKind) => Promise<CacheStats>;
+  /** 查某首音频的本地缓存状态（磁盘实查，无副作用）。 */
+  audioCheck: (key: string) => Promise<AudioCacheState>;
 }
 
 export interface DesktopApi {

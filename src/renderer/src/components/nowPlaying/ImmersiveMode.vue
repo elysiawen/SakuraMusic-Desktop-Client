@@ -585,7 +585,9 @@ onBeforeUnmount(() => {
         <div class="meta-tags">
           <span v-if="sourceText" class="tag">{{ sourceText }}</span>
           <QualityPicker placement="down" align="left" />
-          <span v-if="player.usingDirect" class="tag direct">直连</span>
+          <span v-if="player.audioCache === 'full'" class="tag cache">缓存</span>
+          <span v-else-if="player.usingDirect" class="tag direct">直连</span>
+          <span v-else-if="!player.loading && player.current" class="tag relay">中转</span>
         </div>
       </div>
 
@@ -967,6 +969,16 @@ onBeforeUnmount(() => {
 .tag.direct {
   border-color: color-mix(in srgb, var(--success) 38%, transparent);
   color: var(--success);
+}
+
+.tag.relay {
+  border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
+  color: var(--text-muted);
+}
+
+.tag.cache {
+  border-color: color-mix(in srgb, #6fa0ff 36%, transparent);
+  color: #6fa0ff;
 }
 
 .meta-tags :deep(.quality-trigger) {
