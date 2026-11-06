@@ -55,6 +55,7 @@ jobs:
       # --config.extraMetadata.version 覆盖 package.json 版本号，
       # 产物文件名里的版本不再是 0.1.0，而是当天日期。
       - name: Build and package
+        shell: bash
         run: |
           npm run build
           npx electron-builder --${{ matrix.platform }} --publish never \
