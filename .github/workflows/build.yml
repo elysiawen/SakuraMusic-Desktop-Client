@@ -46,6 +46,7 @@ jobs:
       # 版本号 = 北京时间当天日期（20261106），让安装包文件名和 Release tag 对齐
       - name: Resolve version
         id: version
+        shell: bash
         run: echo "version=$(TZ=Asia/Shanghai date '+%Y%m%d')" >> "$GITHUB_OUTPUT"
 
       # 架构矩阵（x64 / arm64）在 electron-builder.yml 里，这里不额外传。
@@ -69,6 +70,7 @@ jobs:
             release/*.dmg
             release/*.AppImage
             release/*.deb
+            release/*.tar.gz
 
   release:
     name: publish release
@@ -86,6 +88,7 @@ jobs:
       # 版本号 = 北京时间当天日期（20261106），同时生成构建时间与提交号
       - name: Resolve version
         id: version
+        shell: bash
         run: |
           echo "version=$(TZ=Asia/Shanghai date '+%Y%m%d')" >> "$GITHUB_OUTPUT"
           echo "built_at=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S') (UTC+8)" >> "$GITHUB_OUTPUT"
