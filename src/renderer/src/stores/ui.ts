@@ -8,6 +8,11 @@ const HINTS_STORAGE_KEY = 'sakura.desktop.lyric-hints';
  * 这里只存字符串不校验：存档里留了已删除的样式 id 时，渲染层会回落到第一种。
  */
 const MODE_STORAGE_KEY = 'sakura.desktop.now-playing-mode';
+/**
+ * 「弹出模式」是否开着：关掉独立窗口只是收面板，下次打开还是弹出；
+ * 只有「缩回播放器」才清掉它。
+ */
+const POPPED_STORAGE_KEY = 'sakura.desktop.now-playing-popped';
 
 function loadHintsVisible(): boolean {
   try {
@@ -22,6 +27,14 @@ function loadNowPlayingMode(): string {
     return localStorage.getItem(MODE_STORAGE_KEY) || 'classic';
   } catch {
     return 'classic';
+  }
+}
+
+function loadNowPlayingPoppedOut(): boolean {
+  try {
+    return localStorage.getItem(POPPED_STORAGE_KEY) === '1';
+  } catch {
+    return false;
   }
 }
 
@@ -41,6 +54,8 @@ export const useUiStore = defineStore('ui', () => {
   const lyricHints = ref(loadHintsVisible());
   /** 全屏播放页样式 id（注册表见 `nowPlayingModes.ts`），样式菜单即时切换。 */
   const nowPlayingMode = ref(loadNowPlayingMode());
+  /** 播放页是否处于「弹出模式」（见 POPPED_STORAGE_KEY 的注释）。 */
+  const nowPlayingPoppedOut = ref(loadNowPlayingPoppedOut());
 
   watch(lyricHints, (visible) => {
     try {
@@ -53,6 +68,14 @@ export const useUiStore = defineStore('ui', () => {
   watch(nowPlayingMode, (mode) => {
     try {
       localStorage.setItem(MODE_STORAGE_KEY, mode);
+    } catch {
+      // 同上：存储不可用不影响当次切换。
+    }
+  });
+
+  watch(nowPlayingPoppedOut, (popped) => {
+    try {
+      localStorage.setItem(POPPED_STORAGE_KEY, popped ? '1' : '0');
     } catch {
       // 同上：存储不可用不影响当次切换。
     }
@@ -98,6 +121,7 @@ export const useUiStore = defineStore('ui', () => {
     queueOpen,
     lyricHints,
     nowPlayingMode,
+    nowPlayingPoppedOut,
     setLyricHints,
     setNowPlayingMode,
     openLyrics,

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import SakuraPetals from '@/components/common/SakuraPetals.vue';
 import AppSidebar from '@/components/layout/AppSidebar.vue';
 import { nowPlayingModeDef } from '@/components/nowPlaying/nowPlayingModes';
+import { initNowPlayingHost } from '@/nowPlaying/host';
 import PlayerBar from '@/components/layout/PlayerBar.vue';
 import TitleBar from '@/components/layout/TitleBar.vue';
 import { useTransport } from '@/composables/useTransport';
@@ -27,6 +28,10 @@ const room = useRoomStore();
 const ui = useUiStore();
 const route = useRoute();
 const router = useRouter();
+
+// 弹出式播放窗口的宿主桥：推快照、收命令、接管「打开全屏歌词」的入口
+// （独立窗口开着时点封面是把它叫到最前，播放页全局只有一份）。
+initNowPlayingHost();
 
 /** 起播时写一条播放历史；记录失败不影响播放，store 内部已吞掉异常。 */
 watch(

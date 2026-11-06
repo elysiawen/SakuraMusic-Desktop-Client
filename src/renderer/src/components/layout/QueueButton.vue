@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
+import { usePopoverDragGuard } from '@/composables/usePopoverDragGuard';
 import { useUiStore } from '@/stores/ui';
 import QueuePanel from './QueuePanel.vue';
 
@@ -18,6 +19,9 @@ const props = withDefaults(defineProps<{ placement?: 'up' | 'down'; size?: numbe
 const ui = useUiStore();
 /** 包裹按钮与面板，用来判断「这次点击是不是在浮层里面」。 */
 const wrapRef = ref<HTMLElement | null>(null);
+
+// 面板开着时标题栏不能当拖动区使，否则点它收不掉面板。
+usePopoverDragGuard(() => ui.queueOpen);
 
 function onDocumentPointerDown(event: PointerEvent): void {
   if (!ui.queueOpen) return;

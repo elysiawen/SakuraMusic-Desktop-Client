@@ -10,6 +10,7 @@ import { getConfig, saveConfig } from './config/store';
 import { closeDesktopLyric, initDesktopLyric, syncDesktopLyric } from './lyric';
 import { installMenu } from './menu';
 import { registerIpc } from './ipc';
+import { closeNowPlayingWindow, initNowPlayingWindow } from './nowPlayingWindow';
 import { createMainWindow } from './windows/main';
 import {
   disposeTaskbarPreview,
@@ -128,8 +129,12 @@ if (!hasLock) {
     mainWindow.on('closed', () => {
       disposeTaskbarPreview();
       mainWindow = null;
-      // 不收托盘的模式下关窗即退出：把歌词窗口一起带走，window-all-closed 才会触发。
-      if (!quitting && !getConfig().closeToTray) closeDesktopLyric();
+      // 不收托盘的模式下关窗即退出：把歌词窗口与弹出播放窗口一起带走，
+      // window-all-closed 才会触发。
+      if (!quitting && !getConfig().closeToTray) {
+        closeDesktopLyric();
+        closeNowPlayingWindow();
+      }
     });
     ensureTray();
   };
@@ -165,6 +170,9 @@ if (!hasLock) {
     // 桌面歌词：跟上次开关状态恢复；主窗口收进托盘后歌词继续显示。
     initDesktopLyric({ bffUrl: bff.url, secret: bff.secret });
     syncDesktopLyric(getConfig());
+
+    // 弹出式播放窗口：点封面/弹出按钮时建，全生命周期惰性。
+    initNowPlayingWindow({ bffUrl: bff.url, secret: bff.secret, getMainWindow: () => mainWindow });
 
     app.on('activate', () => {
       // 歌词窗口不算数：Dock 点一下要把主窗口找回来。

@@ -122,6 +122,14 @@ img {
   -webkit-app-region: no-drag;
 }
 
+/*
+ * 浮层开着时把拖动区临时降级成普通区域：拖动区吞掉点击，点标题栏收不掉
+ * 浮层。由 usePopoverDragGuard 在最后一个浮层关掉后摘掉这个类。
+ */
+html.has-popover .drag {
+  -webkit-app-region: no-drag;
+}
+
 /* ---------------- 按钮 ---------------- */
 
 .btn {

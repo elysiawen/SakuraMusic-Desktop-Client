@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
+import { usePopoverDragGuard } from '@/composables/usePopoverDragGuard';
 import { useAuthStore } from '@/stores/auth';
 import { useHomeStore } from '@/stores/home';
 import { PALETTES, useThemeStore, type ThemeMode } from '@/stores/theme';
@@ -76,6 +77,9 @@ const maximized = ref(false);
 const paletteOpen = ref(false);
 const paletteWrap = ref<HTMLElement | null>(null);
 let unsubscribeMaximized: (() => void) | null = null;
+
+// 面板开着时标题栏不能当拖动区使，否则点它收不掉面板。
+usePopoverDragGuard(() => paletteOpen.value);
 
 const modes: Array<{ value: ThemeMode; label: string; icon: string }> = [
   { value: 'system', label: '跟随系统', icon: 'monitor' },

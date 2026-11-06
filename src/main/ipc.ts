@@ -5,6 +5,7 @@ import type {
   DesktopConfig,
   DesktopConfigPatch,
   DesktopLyricState,
+  NowPlayingCommand,
   PlatformCredentialState,
   PlatformKey,
   SaveServerInput,
@@ -23,6 +24,14 @@ import { queryAudioCacheState } from './cache/audio';
 import { clearServer, getConfig, saveConfig, saveServer } from './config/store';
 import { normalizeBaseUrl } from './config/url';
 import { getLyricState, pushLyricState } from './lyric';
+import {
+  closeNowPlayingWindow,
+  focusNowPlayingWindow,
+  getNowPlayingState,
+  isNowPlayingOpen,
+  openNowPlayingWindow,
+  pushNowPlayingState,
+} from './nowPlayingWindow';
 import { logTaskbarPreview, setTaskbarPreviewImage } from './windows/taskbarPreview';
 import { probeServer } from './bff/gateway';
 
@@ -132,6 +141,36 @@ export function registerIpc(context: IpcContext): void {
     'cache:audio-check',
     (_event, key: string): 'full' | 'partial' | null => queryAudioCacheState(key),
   );
+
+  // ---- 弹出式播放窗口（独立播放窗口）：窗口间中转站 ----
+
+  ipcMain.handle('np:open', (): void => {
+    openNowPlayingWindow();
+  });
+  ipcMain.handle('np:is-open', (): boolean => isNowPlayingOpen());
+  ipcMain.handle('np:focus', (): void => {
+    focusNowPlayingWindow();
+  });
+  ipcMain.handle('np:close', (): void => {
+    closeNowPlayingWindow();
+  });
+  ipcMain.handle('np:get-state', (): unknown => getNowPlayingState());
+  ipcMain.on('np:push', (_event, state: unknown): void => {
+    pushNowPlayingState(state);
+  });
+  ipcMain.on('np:command', (_event, command: NowPlayingCommand): void => {
+    // 命令回主窗口执行：弹出窗口只出嘴不出手。
+    const main = context.getMainWindow();
+    if (main && !main.isDestroyed()) {
+      // 「缩回播放器」要把主窗口叫回来：页面缩回去了，用户得看得见。
+      if (command.type === 'popIn') {
+        if (main.isMinimized()) main.restore();
+        main.show();
+        main.focus();
+      }
+      main.webContents.send('np:command', command);
+    }
+  });
 
   ipcMain.handle('dialog:choose-directory', async (event): Promise<string | null> => {
     const options: Electron.OpenDialogOptions = {

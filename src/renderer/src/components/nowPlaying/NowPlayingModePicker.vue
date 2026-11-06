@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
+import { usePopoverDragGuard } from '@/composables/usePopoverDragGuard';
 import { useUiStore } from '@/stores/ui';
 import { NOW_PLAYING_MODES, nowPlayingModeDef } from './nowPlayingModes';
 
@@ -8,7 +9,7 @@ import { NOW_PLAYING_MODES, nowPlayingModeDef } from './nowPlayingModes';
  * 全屏播放页样式选择器：注册表里的所有样式在顶栏直接点选。
  *
  * 弹层模式与 `QualityPicker` 一致：Teleport 到 body + fixed 摆位
- * （顶栏的层叠上下文压不住），外部点击 / Esc / 滚动即收起。
+ * （顶栏的层叠上下文压不住），外部点击 / Esc 收起，滚动只重新贴位。
  * Esc 在捕获阶段拦下，免得连整个播放页一起被关掉。
  */
 const ui = useUiStore();
@@ -16,6 +17,9 @@ const ui = useUiStore();
 const open = ref(false);
 const wrapRef = ref<HTMLElement | null>(null);
 const menuRef = ref<HTMLElement | null>(null);
+
+// 菜单开着时标题栏不能当拖动区使，否则点它收不掉菜单。
+usePopoverDragGuard(() => open.value);
 
 /** 与样式里的 `width: 208px` 保持一致（摆位要用）。 */
 const MENU_WIDTH = 208;
@@ -67,10 +71,12 @@ function onKeydown(event: KeyboardEvent): void {
   open.value = false;
 }
 
-function onViewportScroll(event: Event): void {
-  if (!open.value) return;
-  if (event.target instanceof Node && menuRef.value?.contains(event.target)) return;
-  open.value = false;
+/**
+ * 任何滚动都只重新贴位、不收起：歌词换行时列表自己就在滚，一滚就收的话
+ * 这个面板根本没法用。触发按钮在顶栏（fixed），重新贴位等于原地不动。
+ */
+function onViewportScroll(): void {
+  if (open.value) placeMenu();
 }
 
 function onResize(): void {

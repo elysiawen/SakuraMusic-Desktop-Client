@@ -1,26 +1,64 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import AppIcon from '@/components/common/AppIcon.vue';
+import QueueButton from '@/components/layout/QueueButton.vue';
+import { usePlayerStore } from '@/stores/player';
+import { useRoomStore } from '@/stores/room';
 import { useUiStore } from '@/stores/ui';
 import NowPlayingModePicker from './NowPlayingModePicker.vue';
-import QueueButton from '@/components/layout/QueueButton.vue';
 
 /**
- * 全屏播放页顶栏的右侧操作区：所有播放页样式共享，唯一的一份。
+ * 全屏播放页的顶栏内容：左边「收起 + 播放状态徽标 + 弹出」，右边「样式菜单 /
+ * 一起听 / 队列 / 窗口按钮」。所有播放页样式共享，唯一的一份。
  *
  * 播放页样式的约定是「一个文件自治整个页面」——背景、歌词排版、底部播放条
- * 都归样式自己发挥；唯独右上角这条（样式菜单 / 一起听 / 队列 / 窗口按钮）
- * 保持统一，新样式直接放 `<NowPlayingTopActions />`，不要自己重写。
+ * 都归样式自己发挥；唯独顶栏这条保持统一，新样式把 `<NowPlayingTopActions />`
+ * 放进自己的 `<header class="... drag">` 就行，不要自己重写。
+ *
+ * 根元素刻意不带 `no-drag`：两侧操作区之间的留白仍是窗口拖动区，标题栏上的
+ * 双击最大化也照常；两个操作区各自 `no-drag` 并拦下双击，免得点按钮触发最大化。
  *
  * 窗口按钮只在 Windows/Linux 出现（macOS 的红绿灯在左边，由系统画）。
  */
 const ui = useUiStore();
+const player = usePlayerStore();
+const room = useRoomStore();
 const router = useRouter();
 
 const isMac = window.sakura.platform === 'darwin';
+/** 弹出式播放窗口里要跳壳层路由的按钮（一起听）不显示，播放列表保留。 */
+const isPopOut = new URLSearchParams(window.location.search).get('window') === 'nowplaying';
 const maximized = ref(false);
 let unsubscribeMaximized: (() => void) | null = null;
+
+/** 徽标文案的状态口径与各模式的播放按钮一致：占着一起听席位就看房间的状态。 */
+const roomSeat = computed(() => room.seatActive);
+const shownPlaying = computed(() => (roomSeat.value ? room.playing : player.playing));
+
+/**
+ * 收起按钮，覆盖层与弹出窗口共用（行为按窗口区分）：
+ * 覆盖层里 =「收起歌词（Esc）」，关掉覆盖层而已；
+ * 弹出窗口里 =「缩回播放器」——弹出模式结束，播放页回到主程序的覆盖层里。
+ * 只关窗口（X / Esc）不算数：下次打开还是弹出。
+ */
+function collapse(): void {
+  if (!isPopOut) {
+    ui.closeLyrics();
+    return;
+  }
+  // 缩回播放器：先告诉主窗口收摊（清弹出模式、开覆盖层），再关掉自己。
+  window.sakura.nowPlaying.sendCommand({ type: 'popIn' });
+  void window.sakura.nowPlaying.closeWindow();
+}
+
+/** 弹出为独立窗口：播放页全局只有一份，弹出后主窗口里的覆盖层随即收起。 */
+async function popOut(): Promise<void> {
+  // 先记住弹出模式：此后封面点击 / L 一律去独立窗口，不再叠覆盖层。
+  ui.nowPlayingPoppedOut = true;
+  await window.sakura.nowPlaying.open();
+  ui.closeLyrics();
+}
 
 function minimize(): void {
   void window.sakura.windowControls.minimize();
@@ -57,39 +95,136 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="lyric-top-actions no-drag" @dblclick.stop>
-    <!-- 样式菜单：注册表里有多少种播放页样式，这里就列多少种 -->
-    <NowPlayingModePicker />
-    <button type="button" class="btn-icon" title="一起听" @click="openTogether">
-      <AppIcon name="users" :size="18" />
-    </button>
-    <!-- 队列：这里在页面顶部，面板必须向下弹 -->
-    <QueueButton placement="down" :size="18" />
+  <!-- 根元素是标题栏的拖动区，两簇按钮各自 no-drag 接管点按 -->
+  <div class="np-topbar">
+    <div class="np-top-left no-drag" @dblclick.stop>
+      <button
+        type="button"
+        class="btn-icon"
+        :title="isPopOut ? '缩回播放器' : '收起歌词（Esc）'"
+        @click="collapse"
+      >
+        <AppIcon :name="isPopOut ? 'pop-in' : 'chevron-down'" :size="isPopOut ? 18 : 20" />
+      </button>
+      <span class="np-badge">
+        <span class="eq" :class="{ 'is-playing': shownPlaying }" aria-hidden="true">
+          <i /><i /><i />
+        </span>
+        {{ roomSeat ? '一起听中' : shownPlaying ? '播放中' : '暂停' }}
+      </span>
+      <button
+        v-if="!isPopOut"
+        type="button"
+        class="btn-icon"
+        title="弹出为独立窗口"
+        @click="popOut"
+      >
+        <AppIcon name="external" :size="18" />
+      </button>
+    </div>
 
-    <template v-if="!isMac">
-      <span class="action-divider" aria-hidden="true" />
-      <div class="window-controls">
-        <button class="window-button" type="button" aria-label="最小化" @click="minimize">
-          <AppIcon name="minimize" :size="15" />
-        </button>
-        <button
-          class="window-button"
-          type="button"
-          :aria-label="maximized ? '还原' : '最大化'"
-          @click="toggleMaximize"
-        >
-          <AppIcon :name="maximized ? 'restore' : 'maximize'" :size="13" />
-        </button>
-        <button class="window-button is-close" type="button" aria-label="关闭" @click="close">
-          <AppIcon name="close" :size="15" />
-        </button>
-      </div>
-    </template>
+    <div class="np-top-actions no-drag" @dblclick.stop>
+      <!-- 样式菜单：注册表里有多少种播放页样式，这里就列多少种 -->
+      <NowPlayingModePicker />
+      <button v-if="!isPopOut" type="button" class="btn-icon" title="一起听" @click="openTogether">
+        <AppIcon name="users" :size="18" />
+      </button>
+      <!-- 队列：这里在页面顶部，面板必须向下弹（弹出窗口里也保留） -->
+      <QueueButton placement="down" :size="18" />
+
+      <template v-if="!isMac">
+        <span class="action-divider" aria-hidden="true" />
+        <div class="window-controls">
+          <button class="window-button" type="button" aria-label="最小化" @click="minimize">
+            <AppIcon name="minimize" :size="15" />
+          </button>
+          <button
+            class="window-button"
+            type="button"
+            :aria-label="maximized ? '还原' : '最大化'"
+            @click="toggleMaximize"
+          >
+            <AppIcon :name="maximized ? 'restore' : 'maximize'" :size="13" />
+          </button>
+          <button class="window-button is-close" type="button" aria-label="关闭" @click="close">
+            <AppIcon name="close" :size="15" />
+          </button>
+        </div>
+      </template>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.lyric-top-actions {
+/* 整条顶栏内容铺满标题栏：两侧收着按钮，中间留白归拖动区。 */
+.np-topbar {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 0 16px;
+}
+
+.np-top-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 播放状态徽标：常驻的「播放中 / 暂停 / 一起听中」小胶囊，带一个跳动的均衡器。 */
+.np-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 14px 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+  backdrop-filter: blur(var(--glass-blur));
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.eq {
+  display: inline-flex;
+  height: 12px;
+  align-items: flex-end;
+  gap: 2.5px;
+}
+
+.eq i {
+  width: 2.5px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: height 0.2s ease;
+}
+
+.eq.is-playing i {
+  animation: eq-bounce 900ms ease-in-out infinite alternate;
+}
+
+.eq.is-playing i:nth-child(2) {
+  animation-delay: 180ms;
+}
+
+.eq.is-playing i:nth-child(3) {
+  animation-delay: 360ms;
+}
+
+@keyframes eq-bounce {
+  from {
+    height: 3px;
+  }
+  to {
+    height: 12px;
+  }
+}
+
+.np-top-actions {
   display: flex;
   align-items: center;
   gap: 4px;

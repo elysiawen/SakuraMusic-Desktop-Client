@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
+import { usePopoverDragGuard } from '@/composables/usePopoverDragGuard';
 import { PREMIUM_QUALITIES, qualityLabel, qualityMenuLabel, type Quality } from '@/api/types';
 import { usePlayerStore } from '@/stores/player';
 import { QUALITY_ORDER } from '@/utils/track';
@@ -30,6 +31,9 @@ const player = usePlayerStore();
 const open = ref(false);
 const wrapRef = ref<HTMLElement | null>(null);
 const menuRef = ref<HTMLElement | null>(null);
+
+// 面板开着时标题栏不能当拖动区使，否则点它收不掉面板。
+usePopoverDragGuard(() => open.value);
 
 /** 面板宽度与贴边留白，与样式里的 `width: 232px` 保持一致（摆位要用）。 */
 const MENU_WIDTH = 232;
@@ -161,13 +165,11 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 /**
- * 页面（或视口）一动，fixed 面板的贴边位置就不再准确，直接收起最省事。
- * 面板自己内部的滚动不算。
+ * 任何滚动都只重新贴位、不收起：歌词换行时列表自己就在滚，一滚就收的话
+ * 这个面板根本没法用。触发芯片在播放条/顶栏（fixed），重新贴位跟着挪。
  */
-function onViewportScroll(event: Event): void {
-  if (!open.value) return;
-  if (event.target instanceof Node && menuRef.value?.contains(event.target)) return;
-  open.value = false;
+function onViewportScroll(): void {
+  if (open.value) placeMenu();
 }
 
 function onResize(): void {

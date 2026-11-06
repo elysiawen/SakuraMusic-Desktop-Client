@@ -212,6 +212,64 @@ export interface CacheApi {
   audioCheck: (key: string) => Promise<AudioCacheState>;
 }
 
+/**
+ * 弹出式播放窗口发给主窗口的播放命令。
+ *
+ * 弹出窗口自己不持有音频，所有播放动作都转发给主窗口的播放器执行。
+ */
+export type NowPlayingCommand =
+  | { type: 'toggle' }
+  | { type: 'play' }
+  | { type: 'pause' }
+  | { type: 'next' }
+  | { type: 'prev' }
+  | { type: 'seek'; seconds: number }
+  | { type: 'setVolume'; value: number }
+  | { type: 'toggleMute' }
+  | { type: 'cycleMode' }
+  /** 换音质档位；档位值是业务枚举（Quality），跨进程按字符串传。 */
+  | { type: 'setQuality'; quality: string }
+  | { type: 'setNowPlayingMode'; mode: string }
+  /** 队列面板的三个操作（播放列表在弹出窗口里也保留）。 */
+  | { type: 'playAt'; index: number }
+  | { type: 'removeFromQueueAt'; index: number }
+  | { type: 'clearQueue' }
+  /** 「缩回播放器」：弹出模式结束，播放页回到主程序的覆盖层里。 */
+  | { type: 'popIn' }
+  /** 弹出窗口里点歌手/专辑链接：页面回主窗口开（弹出窗口随之收起）。 */
+  | { type: 'navigate'; path: string };
+
+/**
+ * 「弹出式播放窗口」的窗口间通道。
+ *
+ * 独立播放窗口与主窗口共用同一套播放页组件，但只有一个窗口真正持有
+ * 音频：主窗口推快照（state），弹出窗口发命令（command）。
+ * 快照载荷是渲染端业务对象（含歌曲与逐字歌词），与 DesktopLyricState
+ * 同理不在这里复刻形状，统一走 unknown、由两端自行收窄。
+ */
+export interface NowPlayingApi {
+  /** 打开（或唤起）独立播放窗口；只能有一个，主程序内不再叠覆盖层。 */
+  open: () => Promise<void>;
+  /** 独立播放窗口当前是否开着。 */
+  isOpen: () => Promise<boolean>;
+  /** 把已开着的独立播放窗口叫到最前（不新建；封面点击用）。 */
+  focus: () => Promise<void>;
+  /** 弹出窗口内点关闭时调用：直接关掉独立窗口。 */
+  closeWindow: () => Promise<void>;
+  /** 主窗口 → 弹出窗口：推播放快照。 */
+  pushState: (state: unknown) => void;
+  /** 弹出窗口挂载后拉取最近一次快照（加载晚于主窗口推送时也不丢）。 */
+  getState: () => Promise<unknown>;
+  /** 弹出窗口订阅后续快照。 */
+  onState: (callback: (state: unknown) => void) => () => void;
+  /** 弹出窗口 → 主窗口：发播放命令。 */
+  sendCommand: (command: NowPlayingCommand) => void;
+  /** 主窗口订阅弹出窗口发来的播放命令。 */
+  onCommand: (callback: (command: NowPlayingCommand) => void) => () => void;
+  /** 主窗口订阅「独立窗口开/关」，用来决定要不要持续推快照。 */
+  onOpenChange: (callback: (open: boolean) => void) => () => void;
+}
+
 export interface DesktopApi {
   /** `darwin` / `win32` / `linux`，用于标题栏与快捷键差异。 */
   platform: string;
@@ -229,5 +287,7 @@ export interface DesktopApi {
   windowControls: WindowControlsApi;
   cache: CacheApi;
   lyric: LyricApi;
+  /** 弹出式播放窗口（独立播放窗口）的窗口间通道。 */
+  nowPlaying: NowPlayingApi;
   taskbarPreview: TaskbarPreviewApi;
 }

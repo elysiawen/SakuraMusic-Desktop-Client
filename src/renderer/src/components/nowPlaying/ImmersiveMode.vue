@@ -528,22 +528,8 @@ onBeforeUnmount(() => {
 
       <!-- 页内标题栏：整页盖住窗口，这条带子同时是拖动区 -->
       <header class="immersive-top drag" @dblclick="toggleMaximize">
-        <div class="immersive-topbar">
-          <div class="immersive-top-left no-drag" @dblclick.stop>
-            <button type="button" class="btn-icon" title="收起歌词（Esc）" @click="ui.closeLyrics()">
-              <AppIcon name="chevron-down" :size="20" />
-            </button>
-            <span class="immersive-badge">
-              <span class="eq" :class="{ 'is-playing': shownPlaying }" aria-hidden="true">
-                <i /><i /><i />
-              </span>
-              {{ roomSeat ? '一起听中' : '正在播放' }}
-            </span>
-          </div>
-
-          <!-- 右上角操作区：所有播放页样式共享同一份，见 NowPlayingTopActions -->
-          <NowPlayingTopActions />
-        </div>
+        <!-- 顶栏内容（收起/徽标/弹出 + 右上角操作区）所有播放页样式共享，见 NowPlayingTopActions -->
+        <NowPlayingTopActions />
       </header>
 
       <!-- 歌曲信息：封面收小，与标题歌手压成一行，把舞台让给歌词 -->
@@ -798,72 +784,6 @@ onBeforeUnmount(() => {
   height: var(--titlebar-h);
   flex: none;
   align-items: stretch;
-}
-
-.immersive-topbar {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px 0 16px;
-}
-
-.immersive-top-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.immersive-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  padding: 6px 14px 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
-  backdrop-filter: blur(var(--glass-blur));
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-}
-
-.eq {
-  display: inline-flex;
-  height: 12px;
-  align-items: flex-end;
-  gap: 2.5px;
-}
-
-.eq i {
-  width: 2.5px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--accent);
-  transition: height 0.2s ease;
-}
-
-.eq.is-playing i {
-  animation: eq-bounce 900ms ease-in-out infinite alternate;
-}
-
-.eq.is-playing i:nth-child(2) {
-  animation-delay: 180ms;
-}
-
-.eq.is-playing i:nth-child(3) {
-  animation-delay: 360ms;
-}
-
-@keyframes eq-bounce {
-  from {
-    height: 3px;
-  }
-  to {
-    height: 12px;
-  }
 }
 
 /* ------------------------------ 歌曲信息行 ------------------------------ */

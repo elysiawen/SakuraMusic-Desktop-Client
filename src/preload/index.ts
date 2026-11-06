@@ -6,6 +6,7 @@ import type {
   DesktopConfig,
   DesktopConfigPatch,
   DesktopLyricState,
+  NowPlayingCommand,
   TaskbarPreviewCommand,
   TaskbarPreviewImage,
   PlatformCredentialState,
@@ -73,6 +74,43 @@ const api: DesktopApi = {
       ipcRenderer.on('lyric:prefs', listener);
       return () => {
         ipcRenderer.removeListener('lyric:prefs', listener);
+      };
+    },
+  },
+
+  nowPlaying: {
+    open: (): Promise<void> => ipcRenderer.invoke('np:open'),
+    isOpen: (): Promise<boolean> => ipcRenderer.invoke('np:is-open'),
+    focus: (): Promise<void> => ipcRenderer.invoke('np:focus'),
+    closeWindow: (): Promise<void> => ipcRenderer.invoke('np:close'),
+    pushState: (state: unknown): void => {
+      ipcRenderer.send('np:push', state);
+    },
+    getState: (): Promise<unknown> => ipcRenderer.invoke('np:get-state'),
+    onState: (callback: (state: unknown) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: unknown): void =>
+        callback(state);
+      ipcRenderer.on('np:state', listener);
+      return () => {
+        ipcRenderer.removeListener('np:state', listener);
+      };
+    },
+    sendCommand: (command: NowPlayingCommand): void => {
+      ipcRenderer.send('np:command', command);
+    },
+    onCommand: (callback: (command: NowPlayingCommand) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, command: NowPlayingCommand): void =>
+        callback(command);
+      ipcRenderer.on('np:command', listener);
+      return () => {
+        ipcRenderer.removeListener('np:command', listener);
+      };
+    },
+    onOpenChange: (callback: (open: boolean) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, open: boolean): void => callback(open);
+      ipcRenderer.on('np:open-change', listener);
+      return () => {
+        ipcRenderer.removeListener('np:open-change', listener);
       };
     },
   },
