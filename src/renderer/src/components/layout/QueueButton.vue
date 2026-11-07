@@ -11,10 +11,10 @@ import QueuePanel from './QueuePanel.vue';
  * 播放条（向上弹出）与全屏歌词顶栏（向下弹出）共用——两处各自写一遍关闭逻辑
  * 很容易只改一处，留下一个关不掉的浮层。
  */
-const props = withDefaults(defineProps<{ placement?: 'up' | 'down'; size?: number }>(), {
-  placement: 'up',
-  size: 17,
-});
+const props = withDefaults(
+  defineProps<{ placement?: 'up' | 'down'; size?: number; stageTone?: string }>(),
+  { placement: 'up', size: 17, stageTone: undefined },
+);
 
 const ui = useUiStore();
 /** 包裹按钮与面板，用来判断「这次点击是不是在浮层里面」。 */
@@ -46,7 +46,12 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
     >
       <AppIcon name="queue" :size="props.size" />
     </button>
-    <QueuePanel :open="ui.queueOpen" :placement="props.placement" @close="ui.closeQueue()" />
+    <QueuePanel
+      :open="ui.queueOpen"
+      :placement="props.placement"
+      :stage-tone="props.stageTone"
+      @close="ui.closeQueue()"
+    />
   </div>
 </template>
 

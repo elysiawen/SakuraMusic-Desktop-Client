@@ -78,32 +78,55 @@
 }
 
 /* 深色：同一套变量换一组值，配色（accent）跟随上面的 data-palette。 */
+:root {
+  /* 深色备用变量：全局深色模式与深色播放页样式共用，只维护一份。 */
+  --dark-bg: #080b14;
+  --dark-bg-soft: #0b1020;
+  --dark-bg-elevated: #101627;
+  --dark-surface: rgba(18, 24, 42, 0.72);
+  --dark-surface-strong: rgba(24, 32, 54, 0.92);
+  --dark-surface-hover: rgba(255, 255, 255, 0.055);
+  --dark-surface-active: rgba(255, 255, 255, 0.09);
+  --dark-border: rgba(255, 255, 255, 0.075);
+  --dark-border-strong: rgba(255, 255, 255, 0.14);
+  --dark-text: #eef2fb;
+  --dark-text-muted: #9aa5bc;
+  --dark-text-faint: #68748c;
+  --dark-shadow-color: rgba(0, 0, 0, 0.5);
+  --dark-glass-blur: 28px;
+  --dark-input-bg: rgba(255, 255, 255, 0.045);
+  --dark-input-border: rgba(255, 255, 255, 0.1);
+  --dark-danger: #ff6b81;
+  --dark-success: #4fd1a1;
+  --dark-warning: #ffb347;
+}
+
 :root[data-theme='dark'] {
-  --bg: #080b14;
-  --bg-soft: #0b1020;
-  --bg-elevated: #101627;
+  --bg: var(--dark-bg);
+  --bg-soft: var(--dark-bg-soft);
+  --bg-elevated: var(--dark-bg-elevated);
 
-  --surface: rgba(18, 24, 42, 0.72);
-  --surface-strong: rgba(24, 32, 54, 0.92);
-  --surface-hover: rgba(255, 255, 255, 0.055);
-  --surface-active: rgba(255, 255, 255, 0.09);
+  --surface: var(--dark-surface);
+  --surface-strong: var(--dark-surface-strong);
+  --surface-hover: var(--dark-surface-hover);
+  --surface-active: var(--dark-surface-active);
 
-  --border: rgba(255, 255, 255, 0.075);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  --border: var(--dark-border);
+  --border-strong: var(--dark-border-strong);
 
-  --text: #eef2fb;
-  --text-muted: #9aa5bc;
-  --text-faint: #68748c;
+  --text: var(--dark-text);
+  --text-muted: var(--dark-text-muted);
+  --text-faint: var(--dark-text-faint);
 
-  --shadow-color: rgba(0, 0, 0, 0.5);
-  --glass-blur: 28px;
+  --shadow-color: var(--dark-shadow-color);
+  --glass-blur: var(--dark-glass-blur);
 
-  --input-bg: rgba(255, 255, 255, 0.045);
-  --input-border: rgba(255, 255, 255, 0.1);
+  --input-bg: var(--dark-input-bg);
+  --input-border: var(--dark-input-border);
 
-  --danger: #ff6b81;
-  --success: #4fd1a1;
-  --warning: #ffb347;
+  --danger: var(--dark-danger);
+  --success: var(--dark-success);
+  --warning: var(--dark-warning);
 
   --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
   --accent-softer: color-mix(in srgb, var(--accent) 8%, transparent);

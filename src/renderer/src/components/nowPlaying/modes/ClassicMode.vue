@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
+import RelayTag from '../shared/RelayTag.vue';
+import TrackCover from '../shared/TrackCover.vue';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
 import { formatTime } from '@/utils/format';
@@ -177,8 +179,7 @@ onBeforeUnmount(() => {
         <aside class="lyric-aside">
           <button type="button" class="cover-stage" title="点击封面收起歌词" @click="ui.closeLyrics()">
             <span class="cover-art">
-              <img v-if="cover" :src="cover" :alt="title" />
-              <AppIcon v-else name="music" :size="54" :stroke-width="1.2" />
+              <TrackCover :cover="cover" :title="title" :icon-size="54" :icon-stroke-width="1.2" />
             </span>
           </button>
 
@@ -216,10 +217,8 @@ onBeforeUnmount(() => {
           <div class="lyric-tags">
             <span v-if="sourceText" class="tag">{{ sourceText }}</span>
             <!-- 音质同样可换：这里的芯片在页面上半部分，面板往下弹 -->
-            <QualityPicker placement="down" align="left" />
-            <span v-if="player.audioCache === 'full'" class="tag cache">缓存</span>
-            <span v-else-if="player.usingDirect" class="tag direct">直连</span>
-            <span v-else-if="!player.loading && player.current" class="tag relay">中转</span>
+            <QualityPicker placement="down" align="left" stage-tone="light" />
+            <RelayTag />
           </div>
         </aside>
 

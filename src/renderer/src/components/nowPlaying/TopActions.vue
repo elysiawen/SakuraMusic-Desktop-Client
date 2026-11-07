@@ -29,6 +29,8 @@ const room = useRoomStore();
 const isMac = window.sakura.platform === 'darwin';
 /** 弹出式播放窗口里不显示播放列表以外的页面动作。 */
 const isPopOut = new URLSearchParams(window.location.search).get('window') === 'nowplaying';
+/** 深色场景（沉浸/雾笺/绘光/町景）的浮层要跟着场景走深色，不是跟全局主题。 */
+const stageTone = computed(() => nowPlayingModeDef(ui.nowPlayingMode).stageTone);
 const maximized = ref(false);
 let unsubscribeMaximized: (() => void) | null = null;
 
@@ -122,9 +124,9 @@ onBeforeUnmount(() => {
       <!-- 样式自己的动作（如町景的取景）：排在样式菜单左边，以后有多余按钮就往这里加 -->
       <slot name="extra" />
       <!-- 样式菜单：注册表里有多少种播放页样式，这里就列多少种 -->
-      <ModePicker />
+      <ModePicker :stage-tone="stageTone" />
       <!-- 队列：这里在页面顶部，面板必须向下弹（弹出窗口里也保留） -->
-      <QueueButton placement="down" :size="18" />
+      <QueueButton placement="down" :size="18" :stage-tone="stageTone" />
 
       <template v-if="!isMac">
         <span class="action-divider" aria-hidden="true" />

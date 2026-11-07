@@ -25,3 +25,17 @@ export function platformName(platform: string): string {
 export function parsePlatform(value: unknown): Platform {
   return value === 'qq' ? 'qq' : 'netease';
 }
+
+/**
+ * 字节 → 可读字符串。
+ * 统一两处实现：offline.ts（只显示 MB/GB）与 SettingsView.vue（B/KB/MB/GB）。
+ * 这里保留 SettingsView 的完整版本，offline.ts 的调用方只传 MB 以上的值，不会触发 B/KB 分支。
+ */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** index;
+  const text = index === 0 || value >= 10 ? Math.round(value).toString() : value.toFixed(1);
+  return `${text} ${units[index]}`;
+}

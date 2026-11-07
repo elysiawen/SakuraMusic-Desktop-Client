@@ -22,8 +22,10 @@ const props = withDefaults(
     placement?: 'up' | 'down';
     /** 面板与芯片左对齐还是右对齐。 */
     align?: 'left' | 'right';
+    /** 深色场景（沉浸/雾笺/绘光/町景）的浮层要跟着场景走深色。 */
+    stageTone?: string;
   }>(),
-  { placement: 'up', align: 'right' },
+  { placement: 'up', align: 'right', stageTone: undefined },
 );
 
 const player = usePlayerStore();
@@ -213,7 +215,7 @@ onBeforeUnmount(() => {
       v-if="open"
       ref="menuRef"
       class="quality-menu popover"
-      :class="[menuUp ? 'is-up' : 'is-down', `is-${props.align}`]"
+      :class="[menuUp ? 'is-up' : 'is-down', `is-${props.align}`, { 'is-dark': stageTone === 'dark' }]"
       :style="menuStyle"
     >
       <button

@@ -15,9 +15,10 @@ import { formatTime } from '@/utils/format';
  * 房间里 `player.queue` 已经被镜像成房间队列（见 `stores/room.ts`），所以照读即可；
  * 只是「放哪首、删哪首」要按房间语义提交给服务端。
  */
-const props = withDefaults(defineProps<{ open: boolean; placement?: 'up' | 'down' }>(), {
-  placement: 'up',
-});
+const props = withDefaults(
+  defineProps<{ open: boolean; placement?: 'up' | 'down'; stageTone?: string }>(),
+  { placement: 'up', stageTone: undefined },
+);
 const emit = defineEmits<{ (event: 'close'): void }>();
 
 const player = usePlayerStore();
@@ -53,7 +54,7 @@ function removeAt(position: number): void {
 
 <template>
   <Transition name="queue">
-    <div v-if="open" class="queue-panel popover" :class="`is-${props.placement}`">
+    <div v-if="open" class="queue-panel popover" :class="[`is-${props.placement}`, { 'is-dark': stageTone === 'dark' }]">
       <header class="queue-head">
         <div class="queue-head-copy">
           <strong>{{ room.seatActive ? '一起听队列' : '播放队列' }}</strong>

@@ -25,7 +25,7 @@ import { useAuthStore } from '@/stores/auth';
 import { PLAY_QUALITIES, usePlayerStore, type RouteMode } from '@/stores/player';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useUiStore } from '@/stores/ui';
-import { platformName } from '@/utils/format';
+import { formatBytes, platformName } from '@/utils/format';
 
 const auth = useAuthStore();
 const player = usePlayerStore();
@@ -133,15 +133,6 @@ function usageOf(kind: CacheKind): number {
 
 function entriesOf(kind: CacheKind): number {
   return cacheStats.value?.kinds.find((item) => item.kind === kind)?.entries ?? 0;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-  const value = bytes / 1024 ** index;
-  const text = index === 0 || value >= 10 ? Math.round(value).toString() : value.toFixed(1);
-  return `${text} ${units[index]}`;
 }
 
 function pickAudioCache(mb: number, label: string): void {

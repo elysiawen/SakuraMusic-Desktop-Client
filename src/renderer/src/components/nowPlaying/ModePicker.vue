@@ -14,6 +14,8 @@ import { NOW_PLAYING_MODES, nowPlayingModeDef, type NowPlayingModeDef } from './
  */
 const ui = useUiStore();
 
+withDefaults(defineProps<{ stageTone?: string }>(), { stageTone: undefined });
+
 const open = ref(false);
 /** 正在给哪个样式开设置弹窗（注册表里挂了 settings 的样式才有）。 */
 const settingsMode = ref<NowPlayingModeDef | null>(null);
@@ -126,7 +128,13 @@ onBeforeUnmount(() => {
   </div>
 
   <Teleport to="body">
-    <div v-if="open" ref="menuRef" class="mode-menu popover" :style="menuStyle">
+    <div
+      v-if="open"
+      ref="menuRef"
+      class="mode-menu popover"
+      :class="{ 'is-dark': stageTone === 'dark' }"
+      :style="menuStyle"
+    >
       <div v-for="mode in NOW_PLAYING_MODES" :key="mode.id" class="mode-row">
         <button
           type="button"

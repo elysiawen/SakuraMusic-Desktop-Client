@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
+import RelayTag from '../shared/RelayTag.vue';
+import TrackCover from '../shared/TrackCover.vue';
 import QualityPicker from '@/components/layout/QualityPicker.vue';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
@@ -325,7 +327,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="machi-overlay">
+  <div class="machi-overlay now-playing-dark">
     <!-- 町景的画布由运行时挂进这个宿主（WebGL2；街景、霓虹、歌词屏全在里面） -->
     <div ref="hostRef" class="machi-host" :class="{ live }" aria-hidden="true" />
 
@@ -378,8 +380,7 @@ onBeforeUnmount(() => {
       <!-- 歌曲信息收进底部：街景的舞台不压字 -->
       <div class="machi-meta">
         <span class="meta-cover">
-          <img v-if="cover" :src="cover" :alt="title" />
-          <AppIcon v-else name="music" :size="16" :stroke-width="1.4" />
+          <TrackCover :cover="cover" :title="title" />
         </span>
         <h1 class="meta-title">{{ title }}</h1>
         <p class="meta-sub">
@@ -412,10 +413,8 @@ onBeforeUnmount(() => {
         <span class="meta-tags">
           <span class="meta-tags-inner">
             <span v-if="sourceText" class="tag">{{ sourceText }}</span>
-            <QualityPicker placement="down" align="right" />
-            <span v-if="player.audioCache === 'full'" class="tag cache">缓存</span>
-            <span v-else-if="player.usingDirect" class="tag direct">直连</span>
-            <span v-else-if="!player.loading && player.current" class="tag relay">中转</span>
+            <QualityPicker placement="down" align="right" stage-tone="dark" />
+            <RelayTag />
           </span>
         </span>
       </div>
@@ -527,16 +526,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   /* 町景固定深夜氛围：街景画在深天上 */
   --bg: #05070a;
-  --text: #f2f3f7;
-  --text-muted: rgba(242, 243, 247, 0.64);
-  --text-faint: rgba(242, 243, 247, 0.42);
-  --border: rgba(255, 255, 255, 0.14);
-  --border-strong: rgba(255, 255, 255, 0.24);
-  --surface: rgba(255, 255, 255, 0.08);
-  --surface-hover: rgba(255, 255, 255, 0.12);
   --surface-strong: rgba(20, 23, 33, 0.82);
-  color: var(--text);
-  background: #05070a;
 }
 
 /* ------------------------------ 町景宿主与兜底 ------------------------------ */

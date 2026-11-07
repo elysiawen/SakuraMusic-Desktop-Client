@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
+import RelayTag from '../shared/RelayTag.vue';
+import TrackCover from '../shared/TrackCover.vue';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
 import { formatTime } from '@/utils/format';
@@ -403,7 +405,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="immersive-overlay">
+  <div class="immersive-overlay now-playing-dark">
       <!-- 流体渐变：低分辨率 canvas 漂移色块，CSS 拉伸 + 模糊收尾 -->
       <canvas ref="fluidRef" class="fluid-canvas" :width="FLUID_W" :height="FLUID_H" aria-hidden="true" />
       <div class="immersive-scrim" aria-hidden="true" />
@@ -419,8 +421,7 @@ onBeforeUnmount(() => {
       <!-- 歌曲信息：封面收小，与标题歌手压成一行，把舞台让给歌词 -->
       <div class="track-meta">
         <button type="button" class="meta-cover" title="点击封面收起歌词" @click="ui.closeLyrics()">
-          <img v-if="cover" :src="cover" :alt="title" />
-          <AppIcon v-else name="music" :size="26" :stroke-width="1.2" />
+          <TrackCover :cover="cover" :title="title" :icon-size="26" :icon-stroke-width="1.2" />
         </button>
         <div class="meta-text">
           <h1 class="meta-title">{{ title }}</h1>
@@ -454,10 +455,8 @@ onBeforeUnmount(() => {
         </div>
         <div class="meta-tags">
           <span v-if="sourceText" class="tag">{{ sourceText }}</span>
-          <QualityPicker placement="down" align="left" />
-          <span v-if="player.audioCache === 'full'" class="tag cache">缓存</span>
-          <span v-else-if="player.usingDirect" class="tag direct">直连</span>
-          <span v-else-if="!player.loading && player.current" class="tag relay">中转</span>
+          <QualityPicker placement="down" align="left" stage-tone="dark" />
+          <RelayTag />
         </div>
       </div>
 
@@ -606,24 +605,10 @@ onBeforeUnmount(() => {
   /*
    * 沉浸模式自成一派深色：不随明暗主题切换（流体/频谱/辉光都要深底），
    * 但 accent 保留主题色，六套配色的性格依然在。
-   * 这些变量只在本页作用域内覆盖，外面（含 Teleport 出去的菜单）不受影响。
+   * 公共变量由 .now-playing-dark 提供，这里只保留特有的 --bg 和 --surface-strong。
    */
   --bg: #0a0a12;
-  --text: #f2f3f7;
-  --text-muted: rgba(242, 243, 247, 0.64);
-  --text-faint: rgba(242, 243, 247, 0.42);
-  --border: rgba(255, 255, 255, 0.14);
-  --border-strong: rgba(255, 255, 255, 0.24);
-  --surface: rgba(255, 255, 255, 0.08);
-  --surface-hover: rgba(255, 255, 255, 0.12);
   --surface-strong: rgba(24, 26, 36, 0.86);
-  /*
-   * color 必须在覆盖后的作用域里重解析一次：body 上的 color 是 :root 变量
-   * 算好的具体值，直接继承下来还是浅色主题的深色字，上面的覆盖就白做了。
-   */
-  color: var(--text);
-  /* 兜底底色跟画布一致（bgBase），首帧画出来之前也不会露出浅色主题的白 */
-  background: #0a0a12;
 }
 
 /* ------------------------------ 背景层 ------------------------------ */

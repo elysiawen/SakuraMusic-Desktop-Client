@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { offlineApi, openProgressEvents, type OfflineProgressEvent } from '@/api/offline';
 import type { OfflineItem } from '@shared/offline';
 import type { Quality, UnifiedTrack } from '@/api/types';
+import { formatBytes } from '@/utils/format';
 
 /**
  * 本地下载库。
@@ -24,13 +25,6 @@ export const useOfflineStore = defineStore('offline', () => {
   const byKey = computed(() => new Map(items.value.map((item) => [item.key, item])));
 
   const usedText = computed(() => formatBytes(usedBytes.value));
-
-  function formatBytes(bytes: number): string {
-    if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
-    const mb = bytes / (1024 * 1024);
-    if (mb < 1024) return `${mb.toFixed(1)} MB`;
-    return `${(mb / 1024).toFixed(2)} GB`;
-  }
 
   function has(key: string): boolean {
     return keys.value.has(key);

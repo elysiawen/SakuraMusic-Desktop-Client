@@ -286,6 +286,40 @@ html.has-popover .drag {
 }
 
 /*
+ * 深色播放页样式（沉浸 / 雾笺 / 绘光 / 町景）的浮层：全局是浅色模式时，
+ * 这些场景自己就是深色，浮层要跟着场景走，不能透出白底。
+ * 变量值引用 themes.css 里的深色备用变量，与全局深色模式共用一份定义。
+ */
+.popover.is-dark {
+  --bg: var(--dark-bg);
+  --bg-elevated: var(--dark-bg-elevated);
+  --text: var(--dark-text);
+  --text-muted: var(--dark-text-muted);
+  --text-faint: var(--dark-text-faint);
+  --border: var(--dark-border);
+  --border-strong: var(--dark-border-strong);
+  --surface: var(--dark-surface);
+  --surface-hover: var(--dark-surface-hover);
+  --surface-strong: var(--dark-surface-strong);
+}
+
+/*
+ * 深色播放页样式的公共变量：四个样式（沉浸/雾笺/绘光/町景）共用一套，
+ * 各样式只保留自己特有的 --bg 和 --surface-strong。
+ */
+.now-playing-dark {
+  --text: var(--dark-text);
+  --text-muted: var(--dark-text-muted);
+  --text-faint: var(--dark-text-faint);
+  --border: var(--dark-border);
+  --border-strong: var(--dark-border-strong);
+  --surface: var(--dark-surface);
+  --surface-hover: var(--dark-surface-hover);
+  color: var(--text);
+  background: var(--bg);
+}
+
+/*
  * 曲目封面的悬停遮罩（与 web 端 TrackList 一致）：中性黑半透明 +
  * 居中白色播放三角，只在鼠标落到封面本身时淡入，不是 hover 整行。
  *
