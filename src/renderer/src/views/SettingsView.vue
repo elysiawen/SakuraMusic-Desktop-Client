@@ -776,7 +776,7 @@ function supportedCapabilities(platform: Platform): Capability[] {
           <span class="section-icon"><AppIcon name="shield" :size="14" /></span>
           <div>
             <h2>关于</h2>
-            <p>版本与运行环境。</p>
+            <p>版本、运行环境与开源致谢。</p>
           </div>
         </div>
       </header>
@@ -785,6 +785,21 @@ function supportedCapabilities(platform: Platform): Capability[] {
         <div class="about-row">
           <span class="about-version">Sakura Music Desktop {{ appInfo?.version ?? '0.1.0' }}</span>
           <span class="about-meta">{{ appInfo?.platform ?? '' }} {{ appInfo?.arch ?? '' }} · Electron {{ appInfo?.electron ?? '' }}</span>
+        </div>
+        <div class="about-credit">
+          <span>
+            部分播放页效果（雾笺 / 绘光 / 町景）移植自开源项目
+            <a
+              class="about-link"
+              href="https://github.com/chthollyphile/folia-major"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Folia
+              <AppIcon name="external" :size="10" />
+            </a>
+            ，感谢原作者与所有贡献者。
+          </span>
         </div>
         <div class="device-id">
           <span class="device-id-label">设备 ID</span>
@@ -1351,6 +1366,27 @@ function supportedCapabilities(platform: Platform): Capability[] {
 .about-meta {
   color: var(--text-faint);
   font-size: 10.5px;
+}
+
+.about-credit {
+  padding: 12px 18px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  line-height: 1.8;
+}
+
+.about-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.about-link:hover {
+  text-decoration: underline;
 }
 
 .device-id {
