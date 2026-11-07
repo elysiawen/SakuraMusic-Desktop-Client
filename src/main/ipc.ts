@@ -144,8 +144,8 @@ export function registerIpc(context: IpcContext): void {
 
   // ---- 弹出式播放窗口（独立播放窗口）：窗口间中转站 ----
 
-  ipcMain.handle('np:open', (): void => {
-    openNowPlayingWindow();
+  ipcMain.handle('np:open', (_event, dark?: unknown): void => {
+    openNowPlayingWindow(dark === true);
   });
   ipcMain.handle('np:is-open', (): boolean => isNowPlayingOpen());
   ipcMain.handle('np:focus', (): void => {

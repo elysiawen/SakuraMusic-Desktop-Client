@@ -1,3 +1,5 @@
+**English** | [简体中文](README.zh-CN.md)
+
 # Sakura Music Desktop
 
 The desktop client for Sakura Music — Windows / macOS / Linux.
@@ -24,6 +26,16 @@ Milestones **M0–M5 are implemented**; M6 (polish and release) is in progress.
 - Full-screen lyrics with clickable artist and album links, plus a separate desktop lyric window
 - Room / follow tracks are enriched on demand while playing: artist and album IDs, available qualities and their sizes
 
+**Now Playing styles**
+Five full-screen layouts, switchable from the player bar's style menu and lazy-loaded on first use:
+- **经典 (Classic)** — cover and lyrics side by side, colors follow the active theme
+- **沉浸 (Immersive)** — oversized centered lyrics over a real-time WebGL2 fluid field and spectrum
+- **雾笺 (Nebbia)** — rain running down a window; lyrics are written onto the glass stroke by stroke
+- **绘光 (Lumiere)** — stage spotlights and light beams sweeping the lyrics (PixiJS)
+- **町景 (Machi)** — a 3D night street (convenience store / gas station / Kowloon bar) with lyrics painted on in-scene screens (three.js), plus a camera / focus / depth-of-field control bar
+
+All five share one shell for expand / collapse and cross-fade. Everything is rendered locally; no audio or lyric data leaves the machine.
+
 **Library & Offline**
 - Favorites, play history, local playlists, offline playback of downloaded tracks
 - User-initiated downloads have **no storage cap**; only automatically cached audio and cover art are LRU-bounded
@@ -47,6 +59,14 @@ Windows only. Hovering the taskbar icon shows a self-drawn 320×200 card (cover,
 - Toggle in `Settings → Taskbar Preview` and in the tray menu (Windows only); enabled by default.
 - Verifying requires a real Windows session: DWM only sends `WM_DWMSENDICONICTHUMBNAIL` while the thumbnail is actually visible.
 - macOS / Linux keep the system title bar and have no thumbnail toolbar; this feature is skipped entirely.
+
+## Tech Stack
+
+- **Shell**: Electron 38 (main + preload + renderer), electron-vite, electron-builder
+- **UI**: Vue 3.5 (`<script setup>`), Pinia, Vue Router, TypeScript
+- **Graphics**: hand-written WebGL2 shaders (沉浸 / 雾笺), PixiJS v8 (绘光), three.js (町景)
+- **Native**: koffi FFI for Windows DWM / taskbar thumbnails; `safeStorage` for encrypted sessions
+- **Quality**: `vue-tsc` + `tsc` type checks, CDP smoke scripts under `scripts/`
 
 ## Development
 
@@ -125,10 +145,38 @@ src/
     windows/   Window creation, rounded corners, Windows taskbar thumbnail preview
   preload/     Minimal desktop capabilities exposed via contextBridge
   renderer/    Vue 3 desktop UI
+    components/nowPlaying/
+               Full-screen player styles (nowPlaying/modes, machi, nebbia, lumiere, pixi)
   shared/      Types and constants shared between main and renderer
 scripts/       Dev-time smoke-test helpers
 build/         Icons and other packaging resources
 ```
+
+## Open Source & Acknowledgements
+
+This client is assembled from a lot of excellent open-source work. Thanks to the maintainers and contributors of:
+
+**Runtime & tooling**
+- [Electron](https://www.electronjs.org/) — desktop shell (MIT)
+- [Vue.js](https://vuejs.org/) and [Vue Router](https://router.vuejs.org/) — renderer framework (MIT)
+- [Pinia](https://pinia.vuejs.org/) — state stores (MIT)
+- [Vite](https://vitejs.dev/) and [electron-vite](https://electron-vite.org/) — dev server and build pipeline (MIT)
+- [TypeScript](https://www.typescriptlang.org/) — type system (Apache-2.0)
+- [electron-builder](https://www.electron.build/) — packaging and installers (MIT)
+
+**Graphics**
+- [PixiJS](https://pixijs.com/) — 绘光 (Lumiere) rendering (MIT)
+- [three.js](https://threejs.org/) — 町景 (Machi) street scenes (MIT)
+- [@chenglou/pretext](https://github.com/chenglou/pretext) — text layout used by 绘光 (MIT)
+
+**Native**
+- [koffi](https://koffi.dev/) — FFI used for Windows DWM and taskbar thumbnail APIs (MIT)
+
+**Data**
+- [AnimCJK](https://github.com/animCJK) — stroke outlines used by 雾笺 (Nebbia) for stroke-order handwriting. The graphics data derive from the Arphic PL KaitiM fonts and are distributed under the **Arphic Public License**. The license texts ship with the stroke data at [`nebbia/licenses/nebbia-strokes/`](src/renderer/src/components/nowPlaying/nebbia/licenses/nebbia-strokes).
+
+**Visualizer styles**
+The 雾笺 (Nebbia), 绘光 (Lumiere) and 町景 (Machi) visualizers are ported from the **[Folia](https://github.com/chthollyphile/folia-major)** desktop music visualizer project (`folia-major`). Many thanks to its author for the WebGL2 / PixiJS / three.js engines, the scene design, and the thoughtful details in each scene. The ports keep the rendering code faithful; only the React shell was rewritten for Vue.
 
 ## License
 

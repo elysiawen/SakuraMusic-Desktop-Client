@@ -2,8 +2,8 @@ import { clamp, MASK_SCALE, smooth } from './nebbiaConstants';
 import type { NebbiaGlassMotion } from './nebbiaDrops';
 import type { NebbiaSegments } from './nebbiaSegments';
 import { lineRect, type LaidLine } from './nebbiaScene';
-import { createVisualizerRng, mixVisualizerSeed } from './visualizerSeedHash';
-import { VOCAL_FPS, type VocalEnvelope } from './foliaVocalEnvelope';
+import { createVisualizerRng, mixVisualizerSeed } from '../folia/visualizerSeedHash';
+import { VOCAL_FPS, type VocalEnvelope } from '../folia/foliaVocalEnvelope';
 
 // src/components/visualizer/nebbia/nebbiaHits.ts
 // 雨点打在玻璃上，跟人声走：

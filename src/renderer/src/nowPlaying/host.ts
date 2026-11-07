@@ -1,4 +1,5 @@
 import type { Quality } from '@/api/types';
+import { nowPlayingModeDef } from '@/components/nowPlaying/nowPlayingModes';
 import { useTransport } from '@/composables/useTransport';
 import { router } from '@/router';
 import { usePlayerStore } from '@/stores/player';
@@ -73,7 +74,7 @@ export function initNowPlayingHost(): void {
     // 弹出模式（窗口开着、或只是被 X 关掉了）：封面点击永远是独立窗口。
     if (attached || ui.nowPlayingPoppedOut) {
       // 已开着就是叫到最前，关着就重建——反正不再叠覆盖层。
-      void window.sakura.nowPlaying.open();
+      void window.sakura.nowPlaying.open(nowPlayingModeDef(ui.nowPlayingMode).stageTone === 'dark');
       return;
     }
     ui.lyricsOpen = true;
@@ -83,7 +84,7 @@ export function initNowPlayingHost(): void {
 
   ui.toggleLyrics = (): void => {
     if (attached || ui.nowPlayingPoppedOut) {
-      void window.sakura.nowPlaying.open();
+      void window.sakura.nowPlaying.open(nowPlayingModeDef(ui.nowPlayingMode).stageTone === 'dark');
       return;
     }
     if (ui.lyricsOpen) ui.closeLyrics();

@@ -2,7 +2,7 @@ import { clamp } from './nebbiaConstants';
 import type { NebbiaSourceLine } from './nebbiaChars';
 import { assignRoles, makeBlocks, mergeWords, ROLE_SCALE, ROLE_SCALE_FAST, type PlacedItem } from './nebbiaBlocks';
 import { COMPOSITION_BIAS, COMPOSITIONS, SIMPLE_COMPOSITIONS, type CompositionContext } from './nebbiaCompositions';
-import { createVisualizerRng, hashVisualizerSeed } from './visualizerSeedHash';
+import { createVisualizerRng, hashVisualizerSeed } from '../folia/visualizerSeedHash';
 
 // src/components/visualizer/nebbia/nebbiaLayout.ts
 // 雾笺的整首排版：每句挑一个构图，再在屏上几个候选位置、几档字号里找一个不和「这句出现时还没消失的句子」

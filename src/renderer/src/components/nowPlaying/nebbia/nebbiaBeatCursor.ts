@@ -1,4 +1,4 @@
-import type { BeatFxEvent } from './foliaBeatClock';
+import type { BeatFxEvent } from '../folia/foliaBeatClock';
 
 // src/components/visualizer/nebbia/nebbiaBeatCursor.ts
 // 舞潮踏拍的节拍游标（nebbiaAquarium.ts 每帧调）：返回这一帧走过的拍。节拍表换了、拖了进度只把游标挪到当前时刻，不补拍；

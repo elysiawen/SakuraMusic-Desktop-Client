@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import SakuraPetals from '@/components/common/SakuraPetals.vue';
 import AppSidebar from '@/components/layout/AppSidebar.vue';
@@ -28,6 +28,9 @@ const room = useRoomStore();
 const ui = useUiStore();
 const route = useRoute();
 const router = useRouter();
+
+/** 雾笺/绘光整页是夜色场景：播放页底色跟着用深色，浅色主题下切换时才不会透出白 */
+const stageDark = computed(() => nowPlayingModeDef(ui.nowPlayingMode).stageTone === 'dark');
 
 // 弹出式播放窗口的宿主桥：推快照、收命令、接管「打开全屏歌词」的入口
 // （独立窗口开着时点封面是把它叫到最前，播放页全局只有一份）。
@@ -172,10 +175,30 @@ onBeforeUnmount(() => {
     <PlayerBar />
 
     <!--
-      全屏歌词：盖住整个窗口（含品牌行与顶栏），页内自带一条同高的标题栏。
-      样式（经典 / 沉浸 / 以后追加的）由注册表驱动，页内顶栏的菜单即时切换。
+      播放页底色：切换样式时新旧两层交叉淡化，中间必然有一段时间是半透明的；
+      这层不参与切换、始终垫在下面，过渡期间透出的就是它而不是主界面。
     -->
-    <component :is="nowPlayingModeDef(ui.nowPlayingMode).component" />
+    <Transition name="mode-backdrop">
+      <div
+        v-if="ui.lyricsOpen && player.current"
+        class="mode-backdrop"
+        :class="{ 'mode-backdrop--dark': stageDark }"
+      />
+    </Transition>
+
+    <!--
+      全屏歌词：盖住整个窗口（含品牌行与顶栏），页内自带一条同高的标题栏。
+      展开/收起只在这层做动画（经典那套）；里面换样式是另一层交叉淡化。
+    -->
+    <Transition name="lyric">
+      <div v-show="ui.lyricsOpen && player.current" class="mode-stage">
+        <Transition name="mode-switch">
+          <div :key="ui.nowPlayingMode" class="mode-switch-item">
+            <component :is="nowPlayingModeDef(ui.nowPlayingMode).component" />
+          </div>
+        </Transition>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -216,5 +239,68 @@ onBeforeUnmount(() => {
   .app-content {
     padding-right: 26px;
   }
+}
+
+/* 播放页的舞台：展开/收起由这一层的经典动画负责 */
+.mode-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+
+.lyric-enter-active,
+.lyric-leave-active {
+  transition:
+    opacity 0.28s ease,
+    transform 0.28s ease;
+}
+
+.lyric-enter-from,
+.lyric-leave-to {
+  opacity: 0;
+  transform: translateY(22px) scale(0.99);
+}
+
+/* 样式之间切换：只做透明度交叉淡化，不带位移 */
+.mode-switch-item {
+  position: absolute;
+  inset: 0;
+}
+
+.mode-switch-enter-active {
+  transition: opacity 0.32s ease;
+}
+
+.mode-switch-leave-active {
+  transition: opacity 0.22s ease;
+}
+
+.mode-switch-enter-from,
+.mode-switch-leave-to {
+  opacity: 0;
+}
+
+/* 播放页的常驻底色：切换样式时它不参与（始终不透明，挡住主界面）；
+   但打开播放页时要跟着一起淡入，否则屏幕先「啪」地变黑，入场动画就没对比了 */
+.mode-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: var(--bg);
+}
+
+/* 舞台是夜色场景（雾笺/绘光）时底色也跟着深，切换样式期间不会透出白 */
+.mode-backdrop--dark {
+  background: #05070a;
+}
+
+.mode-backdrop-enter-active,
+.mode-backdrop-leave-active {
+  transition: opacity 0.28s ease;
+}
+
+.mode-backdrop-enter-from,
+.mode-backdrop-leave-to {
+  opacity: 0;
 }
 </style>

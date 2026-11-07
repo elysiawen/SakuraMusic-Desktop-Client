@@ -1,6 +1,6 @@
 import { clamp, NEBBIA_FIXED, smooth } from './nebbiaConstants';
 import { lineRect, type LaidLine } from './nebbiaScene';
-import { createVisualizerRng } from './visualizerSeedHash';
+import { createVisualizerRng } from '../folia/visualizerSeedHash';
 
 // src/components/visualizer/nebbia/nebbiaBreath.ts
 // 让位时用来腾地方：屏上满了，后面那句要写到一句还没消失的句子上（nebbiaScene.ts 的让位），就在那句开写前

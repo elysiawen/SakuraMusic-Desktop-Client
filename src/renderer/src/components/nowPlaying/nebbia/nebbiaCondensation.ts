@@ -1,4 +1,4 @@
-import { createVisualizerRng } from './visualizerSeedHash';
+import { createVisualizerRng } from '../folia/visualizerSeedHash';
 import { segDist } from './nebbiaSegments';
 
 // src/components/visualizer/nebbia/nebbiaCondensation.ts

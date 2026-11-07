@@ -1,4 +1,4 @@
-import { DRUM_KICK, type DrumHits } from './foliaDrumHits';
+import { DRUM_KICK, type DrumHits } from '../folia/foliaDrumHits';
 
 // src/components/visualizer/nebbia/nebbiaDrumBumps.ts
 // 疏雨轻车的鼓点颠簸：车压过底鼓颠一下，代替随机颠簸。只看底鼓（军鼓、镲片一颠就太碎），

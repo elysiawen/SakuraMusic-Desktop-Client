@@ -248,8 +248,12 @@ export type NowPlayingCommand =
  * 同理不在这里复刻形状，统一走 unknown、由两端自行收窄。
  */
 export interface NowPlayingApi {
-  /** 打开（或唤起）独立播放窗口；只能有一个，主程序内不再叠覆盖层。 */
-  open: () => Promise<void>;
+  /**
+   * 打开（或唤起）独立播放窗口；只能有一个，主程序内不再叠覆盖层。
+   * `dark` 让新窗口的底色匹配当前播放页样式，避免弹出瞬间闪白
+   * （雾笺/绘光/沉浸都是夜色场景）。
+   */
+  open: (dark?: boolean) => Promise<void>;
   /** 独立播放窗口当前是否开着。 */
   isOpen: () => Promise<boolean>;
   /** 把已开着的独立播放窗口叫到最前（不新建；封面点击用）。 */

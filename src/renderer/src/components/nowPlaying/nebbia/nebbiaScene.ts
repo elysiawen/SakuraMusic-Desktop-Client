@@ -6,7 +6,7 @@ import { layoutNebbiaSong } from './nebbiaLayout';
 import type { NebbiaBreath } from './nebbiaBreath';
 import type { NebbiaWipe } from './nebbiaWipe';
 import type { NebbiaTuning } from './types';
-import { createVisualizerRng, hashVisualizerSeed } from './visualizerSeedHash';
+import { createVisualizerRng, hashVisualizerSeed } from '../folia/visualizerSeedHash';
 
 // src/components/visualizer/nebbia/nebbiaScene.ts
 // 一首歌在雾笺上的全部安排：每个字的位置、变形后的字形、擦痕边的水珠和下淌的水珠、出现方式（手写或透出）；
@@ -198,6 +198,9 @@ export const buildNebbiaScene = (
             line.breathAt = from;
             line.breathDur = Math.max(0.3, line.yieldAt - 0.3 - from);
             line.breathUntil = laid[by].end + breathHold;
+        } else if (by >= 0 && line.mode === 'fingers') {
+            // 按手指搓掉的：搓开的地方后面那句不再先哈气（不然刚搓开又哈上白气，两个效果打架），直接写
+            laid[by].appearBreathAt = Infinity;
         }
     });
     return laid;

@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "22.20.5",
+    "@types/three": "^0.185.4",
     "@vitejs/plugin-vue": "5.2.4",
     "electron": "38.8.6",
     "electron-builder": "26.18.0",
@@ -33,6 +34,9 @@
     "vue-tsc": "2.2.12"
   },
   "dependencies": {
-    "koffi": "^3.3.7"
+    "@chenglou/pretext": "^0.0.9",
+    "koffi": "^3.3.7",
+    "pixi.js": "^8.22.0",
+    "three": "^0.185.1"
   }
 }

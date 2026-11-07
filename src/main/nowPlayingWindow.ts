@@ -54,8 +54,10 @@ export function pushNowPlayingState(state: unknown): void {
 /**
  * 打开独立播放窗口（只能有一个）：没有就建，有就叫到最前。
  * 与覆盖层互斥——开着时主窗口的「打开全屏歌词」会改走 focus。
+ * `dark` 决定新窗口底色：雾笺/绘光/沉浸是夜色场景，用深色底，
+ * 页面首帧渲染之前也不会闪一格白。
  */
-export function openNowPlayingWindow(): void {
+export function openNowPlayingWindow(dark = false): void {
   if (!entryUrl) return;
   const existing = current();
   if (existing) {
@@ -71,7 +73,7 @@ export function openNowPlayingWindow(): void {
     minHeight: 600,
     show: false,
     icon: appIcon,
-    backgroundColor: '#ffffff',
+    backgroundColor: dark ? '#05070a' : '#ffffff',
     autoHideMenuBar: !isMac,
     ...(isMac
       ? {

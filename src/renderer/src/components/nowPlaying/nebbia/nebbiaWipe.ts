@@ -1,6 +1,6 @@
 import { clamp } from './nebbiaConstants';
 import { lineRect, type LaidLine } from './nebbiaScene';
-import { createVisualizerRng } from './visualizerSeedHash';
+import { createVisualizerRng } from '../folia/visualizerSeedHash';
 
 // src/components/visualizer/nebbia/nebbiaWipe.ts
 // 「手指来回搓掉」的几何：食指中指并拢，手从句子左头往右走，边走边快速上下来回搓。一来一回基本走同一条道，

@@ -1,5 +1,5 @@
-import type { Theme } from './foliaTypes';
-import { parseColorChannels } from './foliaColorMix';
+import type { Theme } from '../folia/foliaTypes';
+import { parseColorChannels } from '../folia/foliaColorMix';
 
 // src/components/visualizer/nebbia/nebbiaPalette.ts
 // 主题 → 窗外的夜景配色：天色两档（主题背景压成夜里的深色），三个灯光色（强调色打头，是聚光灯和霓虹的颜色；

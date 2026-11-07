@@ -1,6 +1,6 @@
 import { clamp, NEBBIA_FIXED } from './nebbiaConstants';
 import { NebbiaDropSpring } from './nebbiaDropSpring';
-import { createVisualizerRng } from './visualizerSeedHash';
+import { createVisualizerRng } from '../folia/visualizerSeedHash';
 
 // src/components/visualizer/nebbia/nebbiaDrops.ts
 // 玻璃上的水珠和颠簸。水珠照 raindrop-fx 的做法：每颗是一张法线贴图精灵，实例数据 6 个数

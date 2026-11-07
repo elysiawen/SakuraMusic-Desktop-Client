@@ -1,4 +1,4 @@
-import type { BeatFxEvent } from './foliaBeatClock';
+import type { BeatFxEvent } from '../folia/foliaBeatClock';
 import { NebbiaBeatCursor } from './nebbiaBeatCursor';
 import type { NebbiaAquaUniforms } from './nebbiaGlUtils';
 import { NebbiaJellies } from './nebbiaJellies';

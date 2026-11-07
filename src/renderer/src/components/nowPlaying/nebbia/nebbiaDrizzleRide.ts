@@ -1,9 +1,9 @@
 import type { NebbiaGlassMotion } from './nebbiaDrops';
 import { NebbiaDrumBumps } from './nebbiaDrumBumps';
-import { getDrumHits } from './foliaDrumHits';
-import { getVocalEnvelope, type VocalEnvelope } from './foliaVocalEnvelope';
-import { BEAT_EFFECT_IDS, beatEffectPartId } from './foliaBeatEffects';
-import { getBeatEffectStrength, getBeatFxHeard, isBeatEffectPlaying } from './foliaBeatFxLive';
+import { getDrumHits } from '../folia/foliaDrumHits';
+import { getVocalEnvelope, type VocalEnvelope } from '../folia/foliaVocalEnvelope';
+import { BEAT_EFFECT_IDS, beatEffectPartId } from '../folia/foliaBeatEffects';
+import { getBeatEffectStrength, getBeatFxHeard, isBeatEffectPlaying } from '../folia/foliaBeatFxLive';
 
 // src/components/visualizer/nebbia/nebbiaDrizzleRide.ts
 // 智能动感模式「疏雨轻车」每帧读的那一份（从 createNebbiaRuntime.ts 拆出）：开着时车跟底鼓颠、雨跟人声轨，

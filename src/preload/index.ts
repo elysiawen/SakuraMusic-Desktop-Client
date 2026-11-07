@@ -79,7 +79,7 @@ const api: DesktopApi = {
   },
 
   nowPlaying: {
-    open: (): Promise<void> => ipcRenderer.invoke('np:open'),
+    open: (dark = false): Promise<void> => ipcRenderer.invoke('np:open', dark),
     isOpen: (): Promise<boolean> => ipcRenderer.invoke('np:is-open'),
     focus: (): Promise<void> => ipcRenderer.invoke('np:focus'),
     closeWindow: (): Promise<void> => ipcRenderer.invoke('np:close'),

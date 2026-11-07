@@ -1,4 +1,4 @@
-import { resolveLucideIconNode } from './foliaLucide';
+import { resolveLucideIconNode } from '../folia/foliaLucide';
 import { clamp } from './nebbiaConstants';
 import { ICON_PREFIX } from './nebbiaChars';
 import { skeletonPolys } from './nebbiaSkeleton';

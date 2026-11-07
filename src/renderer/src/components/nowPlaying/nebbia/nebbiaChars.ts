@@ -1,8 +1,8 @@
-import type { Line } from './foliaTypes';
-import { buildLineGraphemeTimeline } from './graphemeTiming';
-import { getLineRenderEndTime } from './foliaRenderHints';
-import { segmentLyricWords } from './wordSegmentation';
-import { createVisualizerRng, hashVisualizerSeed } from './visualizerSeedHash';
+import type { Line } from '../folia/foliaTypes';
+import { buildLineGraphemeTimeline } from '../folia/graphemeTiming';
+import { getLineRenderEndTime } from '../folia/foliaRenderHints';
+import { segmentLyricWords } from '../folia/wordSegmentation';
+import { createVisualizerRng, hashVisualizerSeed } from '../folia/visualizerSeedHash';
 
 // src/components/visualizer/nebbia/nebbiaChars.ts
 // 把 Folia 的歌词行整理成雾笺要写的逐字序列：每个字 { ch, t, d }，时间来自 Line.words（逐字时间轴），
