@@ -112,10 +112,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          # 同一天多次推送：先删掉当天的旧 Release 和 tag，再按本次提交重建，
-          # 保证 Release 指向最新代码、产物也是最新的一批。
-          gh release delete "$VERSION" --yes --cleanup-tag 2>/dev/null || true
+          # 同一天多次推送：Release 已存在时直接覆盖同名产物，
+          # 避免 delete → create 之间的竞态导致「tag 已存在」报错。
           gh release create "$VERSION" artifacts/* \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Release ${VERSION}" \
-            --notes-file notes.md
+            --notes-file notes.md \
+            2>/dev/null || \
+          gh release upload "$VERSION" artifacts/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
