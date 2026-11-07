@@ -139,7 +139,17 @@ const aquarium = computed(() => tuning.value.behind === 'aquarium');
 const windowSliders = computed(() =>
   aquarium.value ? WINDOW_SLIDERS.filter((spec) => spec.key !== 'bump') : WINDOW_SLIDERS,
 );
-const rainDisabled = computed(() => !aquarium.value && tuning.value.glass === 'snow');
+/**
+ * 街景的雨只画在聚光灯的光柱里：雪窗没有雨，聚光灯关着或强度为 0 时也看不出变化，
+ * 这几种情况「窗外的雨」就不可选。水族箱的细气泡不看聚光灯。
+ */
+const rainDisabled = computed(
+  () =>
+    !aquarium.value
+    && (tuning.value.glass === 'snow'
+      || !tuning.value.scenery.includes('spot')
+      || tuning.value.spot <= 0),
+);
 
 /* ------------------------------ 开关组 ------------------------------ */
 
