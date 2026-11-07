@@ -9,6 +9,7 @@ import {
 } from '@shared/cache';
 import type { AppInfo, DesktopConfig, DesktopConfigPatch } from '@shared/ipc';
 import AppIcon from '@/components/common/AppIcon.vue';
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import {
   CAPABILITIES,
   CAPABILITY_HINT,
@@ -93,6 +94,9 @@ const deviceDraft = ref('');
 const saving = ref(false);
 const cacheStats = ref<CacheStats | null>(null);
 const cacheBusy = ref(false);
+/** 缓存清理确认弹窗：打开时记住要清哪一类（undefined = 全部）。 */
+const clearConfirmOpen = ref(false);
+const clearConfirmKind = ref<CacheKind | undefined>(undefined);
 // 托盘菜单、歌词窗口按钮也会改配置：订阅广播，三处状态保持一致。
 const offPrefs = window.sakura.lyric.onPrefs((value) => {
   config.value = value;
@@ -160,9 +164,14 @@ function pickMetaTtl(days: number, label: string): void {
   void patchConfig({ metaCacheDays: days }, `歌曲信息保留：${label}`);
 }
 
-async function clearCache(kind?: CacheKind): Promise<void> {
+function requestClearCache(kind?: CacheKind): void {
+  clearConfirmKind.value = kind;
+  clearConfirmOpen.value = true;
+}
+
+async function confirmClearCache(): Promise<void> {
+  const kind = clearConfirmKind.value;
   const label = kind ? CACHE_KIND_LABEL[kind] : '全部缓存';
-  if (!window.confirm(`清理${label}？下次播放或浏览时会重新下载。`)) return;
 
   cacheBusy.value = true;
   try {
@@ -172,6 +181,7 @@ async function clearCache(kind?: CacheKind): Promise<void> {
     toast.error(caught instanceof Error ? caught.message : '清理失败');
   } finally {
     cacheBusy.value = false;
+    clearConfirmOpen.value = false;
   }
 }
 
@@ -453,7 +463,7 @@ function supportedCapabilities(platform: Platform): Capability[] {
               type="button"
               class="mini"
               :disabled="cacheBusy || usageOf(kind) <= 0"
-              @click="clearCache(kind)"
+              @click="requestClearCache(kind)"
             >
               清理
             </button>
@@ -549,7 +559,7 @@ function supportedCapabilities(platform: Platform): Capability[] {
             type="button"
             class="mini"
             :disabled="cacheBusy || !cacheStats || cacheStats.totalBytes <= 0"
-            @click="clearCache()"
+            @click="requestClearCache()"
           >
             清理全部
           </button>
@@ -808,6 +818,17 @@ function supportedCapabilities(platform: Platform): Capability[] {
       </div>
     </section>
   </div>
+
+  <ConfirmDialog
+    :visible="clearConfirmOpen"
+    :title="clearConfirmKind ? `清理${CACHE_KIND_LABEL[clearConfirmKind]}` : '清理全部缓存'"
+    message="清理后下次播放或浏览时会重新下载，不影响已下载到本地的歌曲。"
+    confirm-label="清理"
+    danger
+    :busy="cacheBusy"
+    @confirm="confirmClearCache"
+    @close="clearConfirmOpen = false"
+  />
 </template>
 
 <style scoped>

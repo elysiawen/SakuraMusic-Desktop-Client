@@ -68,6 +68,7 @@ jobs:
           path: |
             release/*.exe
             release/*.exe.blockmap
+            release/*.zip
             release/*.dmg
             release/*.AppImage
             release/*.deb

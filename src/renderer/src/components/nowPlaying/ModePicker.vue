@@ -159,7 +159,7 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div v-if="settingsMode" class="mode-settings-overlay" @click.self="settingsMode = null">
       <div
-        class="mode-settings glass-strong"
+        class="mode-settings"
         role="dialog"
         aria-modal="true"
         :aria-label="`${settingsMode.name}设置`"
@@ -315,7 +315,11 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 12px;
   padding: 18px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-xl);
+  /* 遮罩层已经做过一次 backdrop blur，这里不再叠加，避免霓虹背景透出杂色。 */
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
   animation: fade-up var(--dur) var(--ease);
 }
 
