@@ -1,6 +1,7 @@
 import type { Quality } from '@/api/types';
 import { router } from '@/router';
 import { usePlayerStore } from '@/stores/player';
+import { useRoomStore } from '@/stores/room';
 import { useUiStore } from '@/stores/ui';
 import type { NowPlayingCommand } from '@shared/ipc';
 import type { NowPlayingSnapshot } from './types';
@@ -16,6 +17,7 @@ import type { NowPlayingSnapshot } from './types';
  */
 export function initNowPlayingRemote(): void {
   const player = usePlayerStore();
+  const room = useRoomStore();
   const ui = useUiStore();
 
   // 镜像 store 不落盘：localStorage 两个窗口共享，写下去会把主窗口的现场顶掉。
@@ -29,6 +31,8 @@ export function initNowPlayingRemote(): void {
   let anchorAt = performance.now();
   /** 上一拍队列的指纹（指针 + 各曲 key）：没变就不换引用。 */
   let queueSig = '';
+  /** 上一拍房间的指纹（房间码 + 成员展示字段）：没变就不换引用。 */
+  let roomSig = '';
 
   function apply(raw: unknown): void {
     const snap = raw as NowPlayingSnapshot | null;
@@ -70,6 +74,21 @@ export function initNowPlayingRemote(): void {
     player.audioCache = snap.audioCache;
     // 直接写 ref、不走 setNowPlayingMode：回声快照不该再发一遍换样式命令。
     ui.nowPlayingMode = snap.nowPlayingMode;
+
+    // 房间镜像：顶部「一起听」徽标与悬浮窗只要成员和时长。
+    // 时长是主窗口推演好的整秒，这里别开 togetherCounting——本窗口没有服务端
+    // 时钟锚点，togetherRunning 会把 1970 年以来的时间全算进去。
+    const nextRoomSig = `${snap.room.code}|${snap.room.spectating}|${snap.room.members
+      .map((item) => `${item.userId}:${item.nickname}:${item.deviceName}:${item.online}:${item.avatar}`)
+      .join(',')}`;
+    if (nextRoomSig !== roomSig) {
+      roomSig = nextRoomSig;
+      room.code = snap.room.code;
+      room.members = snap.room.members;
+      room.spectating = snap.room.spectating;
+    }
+    room.togetherSeconds = snap.room.togetherSeconds;
+    room.togetherSessionSeconds = snap.room.togetherSessionSeconds;
 
     anchorTime = snap.time;
     anchorPlaying = snap.playing;

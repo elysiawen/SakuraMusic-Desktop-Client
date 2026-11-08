@@ -27,6 +27,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   remove: [track: UnifiedTrack];
+  /** 请求删除单曲的本地下载：确认框由父级（TrackList）持有。 */
+  removeDownload: [track: UnifiedTrack];
 }>();
 
 const player = usePlayerStore();
@@ -136,14 +138,15 @@ async function download(): Promise<void> {
   }
 }
 
-async function removeDownload(): Promise<void> {
+/**
+ * 「删除本地下载」只发请求，真正删除等父级确认后再做。
+ *
+ * 确认框不能挂在这个菜单里：菜单点一下就关、组件随即被 v-if 卸载，弹窗会一起消失；
+ * 列表还有「点外部收菜单」的逻辑，会把点确认框当成一次外部点击。
+ */
+function askRemoveDownload(): void {
+  emit('removeDownload', props.track);
   close();
-  try {
-    await offline.remove(props.track.key);
-    toast.info('已删除本地文件');
-  } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : '删除失败');
-  }
 }
 
 function removeFromPlaylist(): void {
@@ -194,7 +197,7 @@ async function addToPlaylist(id: string, name: string): Promise<void> {
       v-if="offline.has(track.key)"
       type="button"
       class="menu-item danger"
-      @click.stop="removeDownload"
+      @click.stop="askRemoveDownload"
     >
       <AppIcon name="close" :size="13" />
       删除本地下载

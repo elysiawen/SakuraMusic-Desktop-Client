@@ -165,7 +165,12 @@ onBeforeUnmount(() => {
 
   <!-- 样式设置弹窗：外壳只是窗框，内容组件由各样式自己的文件提供 -->
   <Teleport to="body">
-    <div v-if="settingsMode" class="mode-settings-overlay" @click.self="settingsMode = null">
+    <div
+      v-if="settingsMode"
+      class="mode-settings-overlay"
+      :class="{ 'is-dark': stageTone === 'dark' }"
+      @click.self="settingsMode = null"
+    >
       <div
         class="mode-settings"
         role="dialog"
@@ -316,6 +321,25 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(6px);
 }
 
+/*
+ * 弹窗挂在 body 上，拿不到播放页场景里的 .now-playing-dark 变量。深色场景
+ * （雾笺/绘光/沉浸/町景）自己带一份深色变量：遮罩、窗底、文字都跟着走，
+ * 否则白窗 + 浅色文字在夜里糊成一团白。
+ */
+.mode-settings-overlay.is-dark {
+  --bg: var(--dark-bg);
+  --bg-elevated: var(--dark-bg-elevated);
+  --text: var(--dark-text);
+  --text-muted: var(--dark-text-muted);
+  --text-faint: var(--dark-text-faint);
+  --border: var(--dark-border);
+  --border-strong: var(--dark-border-strong);
+  --surface: var(--dark-surface);
+  --surface-hover: var(--dark-surface-hover);
+  --surface-strong: var(--dark-surface-strong);
+  --shadow-color: var(--dark-shadow-color);
+}
+
 .mode-settings {
   display: flex;
   width: min(400px, 100%);
@@ -327,6 +351,8 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-xl);
   /* 遮罩层已经做过一次 backdrop blur，这里不再叠加，避免霓虹背景透出杂色。 */
   background: var(--bg-elevated);
+  /* color 在 body 上就已解析，这里要显式跟窗底一起换，深色场景才不会留浅色字。 */
+  color: var(--text);
   box-shadow: var(--shadow-lg);
   animation: fade-up var(--dur) var(--ease);
 }

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import TrackMoreMenu from './TrackMoreMenu.vue';
 import type { UnifiedTrack } from '@/api/types';
 import { useToast } from '@/composables/useToast';
 import { useTransport } from '@/composables/useTransport';
 import { useLibraryStore } from '@/stores/library';
+import { useOfflineStore } from '@/stores/offline';
 import { usePlayerStore } from '@/stores/player';
 import { cachedImage } from '@/utils/cacheImage';
 import { formatTime, platformName } from '@/utils/format';
@@ -38,6 +40,7 @@ const emit = defineEmits<{ remove: [track: UnifiedTrack] }>();
 const player = usePlayerStore();
 const transport = useTransport();
 const library = useLibraryStore();
+const offline = useOfflineStore();
 const toast = useToast();
 
 const currentKey = computed(() => player.current?.key ?? '');
@@ -85,6 +88,30 @@ function closeMenu(): void {
 function onMenuRemove(track: UnifiedTrack): void {
   closeMenu();
   emit('remove', track);
+}
+
+/** 待确认删除的单曲；非空即弹窗打开。 */
+const removeTarget = ref<UnifiedTrack | null>(null);
+const removing = ref(false);
+
+function onMenuRemoveDownload(track: UnifiedTrack): void {
+  removeTarget.value = track;
+}
+
+async function confirmRemoveDownload(): Promise<void> {
+  const track = removeTarget.value;
+  if (!track || removing.value) return;
+  removing.value = true;
+  try {
+    await offline.remove(track.key);
+    toast.info(`已删除「${track.title}」的本地文件`);
+    removeTarget.value = null;
+  } catch (caught) {
+    // 失败时留着弹窗，让用户能重试或取消。
+    toast.error(caught instanceof Error ? caught.message : '删除失败');
+  } finally {
+    removing.value = false;
+  }
 }
 
 function onDocumentPointerDown(event: PointerEvent): void {
@@ -291,8 +318,28 @@ async function toggleFavorite(track: UnifiedTrack): Promise<void> {
         :removable="removable"
         @close="closeMenu"
         @remove="onMenuRemove"
+        @remove-download="onMenuRemoveDownload"
       />
     </Teleport>
+
+    <!--
+      删除单曲本地文件的确认框挂在列表上：菜单点完就被卸载，弹窗放菜单里会一起消失。
+      文案与「清空本地下载」保持同一口径（不可恢复、需要重新下载）。
+    -->
+    <ConfirmDialog
+      :visible="removeTarget !== null"
+      title="删除本地下载？"
+      :message="
+        removeTarget
+          ? `「${removeTarget.title}」的本地文件会被删除，之后需要重新下载才能离线播放。该操作不可恢复。`
+          : ''
+      "
+      confirm-label="删除"
+      danger
+      :busy="removing"
+      @confirm="confirmRemoveDownload"
+      @close="removeTarget = null"
+    />
   </section>
 </template>
 

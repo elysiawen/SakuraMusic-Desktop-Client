@@ -1,14 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import AppIcon from '@/components/common/AppIcon.vue';
-import BindDialog from '@/components/library/BindDialog.vue';
+import { roomApi, type TogetherOverview, type TogetherPartner } from '@/api/rooms';
 import type { Platform } from '@/api/types';
+import AppIcon from '@/components/common/AppIcon.vue';
+import TogetherPartnerDialog from '@/components/common/TogetherPartnerDialog.vue';
+import BindDialog from '@/components/library/BindDialog.vue';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { useLibraryStore } from '@/stores/library';
 import { cachedImage } from '@/utils/cacheImage';
-import { platformName } from '@/utils/format';
+import {
+  avatarGradient,
+  formatRelativeTime,
+  formatTogetherDuration,
+  platformName,
+} from '@/utils/format';
 
 /**
  * 账户中心：只放「身份」相关的东西——Sakura 账号资料、第三方音乐账号、密码与删号。
@@ -36,6 +43,32 @@ const deleting = ref(false);
 const bindTarget = ref<Platform | null>(null);
 const refreshing = ref<Platform | null>(null);
 
+/** 一起听总览：累计时长、一起听过的伙伴与次数。 */
+const together = ref<TogetherOverview | null>(null);
+const togetherLoading = ref(true);
+const togetherError = ref('');
+
+/** 点开的那位伙伴（null = 关着）。 */
+const openPartnerId = ref<string | null>(null);
+const openPartnerName = ref('');
+
+function openPartner(partner: TogetherPartner): void {
+  openPartnerId.value = partner.userId;
+  openPartnerName.value = partner.nickname;
+}
+
+async function loadTogether(): Promise<void> {
+  togetherLoading.value = true;
+  togetherError.value = '';
+  try {
+    together.value = await roomApi.overview();
+  } catch (error) {
+    togetherError.value = error instanceof Error ? error.message : '一起听数据加载失败';
+  } finally {
+    togetherLoading.value = false;
+  }
+}
+
 const displayName = computed(() => auth.user?.nickname || auth.user?.username || '未登录');
 const initial = computed(() => displayName.value.trim().slice(0, 1).toUpperCase() || 'S');
 const boundCount = computed(() => PLATFORMS.filter((platform) => library.isBound(platform)).length);
@@ -51,6 +84,7 @@ function resetProfileDraft(): void {
 
 onMounted(async () => {
   resetProfileDraft();
+  void loadTogether();
   await Promise.all([library.loadCredentials(), library.loadLocalBound()]).catch(() => undefined);
 });
 
@@ -367,7 +401,85 @@ async function logout(): Promise<void> {
       </div>
     </section>
 
+    <!-- 一起听记录：与 web 端账户中心最后那一栏同源 -->
+    <section class="section">
+      <header class="section-head">
+        <div class="section-title">
+          <span class="section-icon"><AppIcon name="users" :size="14" /></span>
+          <div>
+            <h2>一起听</h2>
+            <p>和好友一起听过的累计时长，点开某位还能看每一次的记录。</p>
+          </div>
+        </div>
+        <span v-if="together && together.partnerCount > 0" class="faint">
+          和 {{ together.partnerCount }} 位好友一起听过
+        </span>
+      </header>
+
+      <div class="panel">
+        <p v-if="togetherLoading" class="together-hint">正在统计…</p>
+        <div v-else-if="togetherError" class="together-hint together-error">
+          <span>{{ togetherError }}</span>
+          <button type="button" class="mini" @click="loadTogether">重试</button>
+        </div>
+
+        <template v-else-if="together">
+          <p v-if="together.partners.length === 0" class="together-hint">
+            还没有和别人一起听过。在「一起听」里创建房间，把房间码或邀请链接发给好友即可开始。
+          </p>
+
+          <template v-else>
+            <div class="together-stats">
+              <div class="together-stat">
+                <span>累计时长</span>
+                <strong>{{ formatTogetherDuration(together.totalSeconds) }}</strong>
+              </div>
+              <div class="together-stat">
+                <span>一起听过的伙伴</span>
+                <strong>{{ together.partnerCount }} 人</strong>
+              </div>
+              <!-- 次数来自明细表：那张表被删掉时服务端给 null，这里就整个不出现。 -->
+              <div v-if="together.sessionCount !== null" class="together-stat">
+                <span>一起听次数</span>
+                <strong>{{ together.sessionCount }} 次</strong>
+              </div>
+            </div>
+
+            <ul class="together-partners">
+              <li v-for="partner in together.partners" :key="partner.userId">
+                <!-- 整行都是按钮：点开看这位好友的每次一起听记录。 -->
+                <button type="button" class="together-partner" @click="openPartner(partner)">
+                  <span
+                    class="together-avatar"
+                    :style="{ background: avatarGradient(partner.nickname || partner.userId) }"
+                  >
+                    <img v-if="partner.avatar" :src="cachedImage(partner.avatar)" alt="" />
+                    <template v-else>{{ (partner.nickname || '友').slice(0, 1) }}</template>
+                  </span>
+                  <span class="row-copy">
+                    <strong>{{ partner.nickname }}</strong>
+                    <small>最近 {{ formatRelativeTime(partner.lastAt) }}</small>
+                  </span>
+                  <strong class="together-time">
+                    {{ formatTogetherDuration(partner.seconds) }}
+                  </strong>
+                  <AppIcon name="chevron-right" :size="14" class="together-more" />
+                </button>
+              </li>
+            </ul>
+          </template>
+        </template>
+      </div>
+    </section>
+
     <BindDialog v-if="bindTarget" :platform="bindTarget" @close="bindTarget = null" @bound="onBound" />
+
+    <TogetherPartnerDialog
+      :visible="openPartnerId !== null"
+      :partner-id="openPartnerId"
+      :partner-name="openPartnerName"
+      @close="openPartnerId = null"
+    />
   </div>
 </template>
 
@@ -793,5 +905,110 @@ async function logout(): Promise<void> {
     flex: 1;
     width: auto;
   }
+}
+
+/* ---------------- 一起听记录 ---------------- */
+
+.together-hint {
+  margin: 0;
+  padding: 16px 18px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.together-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.together-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 26px;
+  padding: 16px 18px;
+}
+
+.together-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.together-stat span {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.together-stat strong {
+  color: var(--text);
+  font-size: 19px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.together-partners {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0 10px 10px;
+}
+
+.together-partner {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.together-partner:hover {
+  border-color: var(--border);
+  background: var(--surface-hover);
+}
+
+.together-avatar {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  overflow: hidden;
+  place-items: center;
+  border-radius: 12px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.together-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.together-time {
+  flex: none;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.together-more {
+  flex: none;
+  color: var(--text-faint);
 }
 </style>

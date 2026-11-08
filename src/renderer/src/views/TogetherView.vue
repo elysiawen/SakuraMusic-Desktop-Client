@@ -5,6 +5,7 @@ import AppIcon from '@/components/common/AppIcon.vue';
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
+import { usePlayerStore } from '@/stores/player';
 import { useRoomStore } from '@/stores/room';
 import { cachedImage } from '@/utils/cacheImage';
 import { formatTime } from '@/utils/format';
@@ -18,7 +19,10 @@ import { formatTime } from '@/utils/format';
  */
 const room = useRoomStore();
 const auth = useAuthStore();
+const player = usePlayerStore();
 const toast = useToast();
+/** 本机正在听私人电台：它会挡住「把一起听接到本机」这类占席位的动作。 */
+const radioActive = computed(() => Boolean(player.radio));
 
 const joinCode = ref('');
 const busy = ref(false);
@@ -439,14 +443,18 @@ onBeforeUnmount(() => {
             <div v-if="room.spectating" class="spectate-bar">
               <span class="spectate-text">
                 <AppIcon name="monitor" :size="14" />
-                <span class="truncate">
+                <span v-if="radioActive" class="truncate">
+                  本机正在听私人电台，退出电台后才能把「一起听」接过来
+                </span>
+                <span v-else class="truncate">
                   正在「{{ room.accountMember?.deviceName ?? '你的另一台设备' }}」上播放
                 </span>
               </span>
               <button
                 type="button"
                 class="btn primary"
-                :disabled="transferring"
+                :disabled="transferring || radioActive"
+                :title="radioActive ? '正在播放私人电台，请先退出电台再把一起听接到本机' : undefined"
                 @click="transferHere"
               >
                 {{ transferring ? '正在转移…' : '转到本机播放' }}

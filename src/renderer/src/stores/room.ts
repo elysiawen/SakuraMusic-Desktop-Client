@@ -152,7 +152,10 @@ export const useRoomStore = defineStore('room', () => {
   let initialized = false;
 
   const active = computed(() => code.value !== null);
-  /** 本机就是席位设备：房间的播放在这台机器上。 */
+  /**
+   * 本机就是席位设备：房间的播放在这台机器上。
+   * 它也是私人电台互斥的判据——旁观设备的播放器归自己用，电台照常可用。
+   */
   const seatActive = computed(() => active.value && !spectating.value);
   const me = computed(() => members.value.find((item) => item.deviceId === devices.selfId) ?? null);
   /**
@@ -407,13 +410,16 @@ export const useRoomStore = defineStore('room', () => {
     }
 
     /*
-     * 私人电台与一起听互斥：服务端把本机拉进房间（同账号另一台设备刚入房）时，
-     * 电台自动结束。这条路径不经过 create/join/transfer —— 第一帧快照会直接推到这里，
-     * UI 层拦不住。只在「刚进房间」时处理，后续每次快照都触发会反复弹提示。
+     * 私人电台与一起听互斥：服务端把本机拉去**占席位**时，电台自动结束。
+     *
+     * 只看 mySeat：同一账号的另一台设备刚入房时，本机这一帧是旁观，
+     * 播放器仍归自己用（下面也会在 !mySeat 处直接返回），电台不该被停。
+     * 这条路径不经过 create/join/transfer —— 第一帧快照直接推到这里，UI 层拦不住；
+     * 只在「刚进房间」时处理，后续每次快照都触发会反复弹提示。
      */
-    if (!code.value && radioActive()) {
+    if (mySeat && !code.value && radioActive()) {
       player.stopRadio();
-      toast.info('已进入「一起听」，私人电台已停止', 6000);
+      toast.info('本机已进入「一起听」，私人电台已停止', 6000);
     }
 
     code.value = view.code;
@@ -721,10 +727,13 @@ export const useRoomStore = defineStore('room', () => {
     return Boolean(player.radio);
   }
 
-  /** 拦下「进入房间」的动作，并说明原因。 */
+  /**
+   * 拦下「让本机占席位」的动作（create / join / transfer），并说明原因。
+   * 旁观设备只是看房间状态，不受这条约束。
+   */
   function radioBlocksRoom(): boolean {
     if (!radioActive()) return false;
-    toast.error('正在播放私人电台，请先退出电台再使用「一起听」');
+    toast.error('正在播放私人电台，请先退出电台再在本机使用「一起听」');
     return true;
   }
 
@@ -870,10 +879,12 @@ export const useRoomStore = defineStore('room', () => {
     // 首连的 `hello` 与 selfId 的 watcher 会同时触发一次：重入会让个人现场被暂存两遍。
     if (reconciling || joining || active.value) return;
     /*
-     * 电台播放中：本次不自动回房（静默，用户没主动点一起听，不该弹提示）。
+     * 电台播放中不让本机自动占席位：join 会用房间队列顶掉电台，而自动对账
+     * 每次连上都会跑，静默跳过即可（用户没主动点一起听，不该弹提示）。
+     * 旁观身份照常恢复——同账号另一台设备在放，与本机这台听什么无关。
      * 房间码仍留在 localStorage，退出电台后下次刷新照样能回去。
      */
-    if (radioActive()) return;
+    const radioOn = radioActive();
     const stored = readStoredRoom();
     const deviceId = devices.selfId;
     if (!stored || !deviceId) return;
@@ -882,10 +893,11 @@ export const useRoomStore = defineStore('room', () => {
     try {
       const preview = await roomApi.preview(stored);
       if (preview.mine && preview.mine !== deviceId) {
-        // 席位在我另一台设备上：一起听跟着那台走了，本机只当旁观，不去抢。
+        // 席位在我另一台设备上：一起听跟着那台走了，本机只当旁观（电台照常听）。
         enterRoom(stored, false);
         return;
       }
+      if (radioOn) return;
       joining = true;
       capturePersonal();
       try {

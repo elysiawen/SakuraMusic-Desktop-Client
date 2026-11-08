@@ -61,12 +61,12 @@ export function useTransport() {
       else void player.playQueue(list, startIndex);
     },
     /**
-     * 开始私人电台：与「一起听」互斥，正在房间里（含旁观）直接拒绝。
-     * 首页已取回的那批会整批入队，点开时不额外请求。
+     * 开始私人电台：本机占着「一起听」席位时互斥；旁观设备（同账号另一台在放）
+     * 的播放器归自己用，不受影响。首页已取回的那批会整批入队，点开时不额外请求。
      */
     startRadio: async (platform: Platform, initialTracks: UnifiedTrack[] = []): Promise<void> => {
-      if (room.active) {
-        toast.error('正在「一起听」中，请先退出再使用私人电台');
+      if (room.seatActive) {
+        toast.error('本机正在「一起听」中，请先退出再使用私人电台');
         return;
       }
       await player.startRadio(platform, initialTracks);

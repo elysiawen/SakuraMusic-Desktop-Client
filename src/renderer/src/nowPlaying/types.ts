@@ -1,5 +1,17 @@
 import type { LyricResult, Platform, Quality, UnifiedTrack } from '@/api/types';
+import type { RoomMember } from '@/api/rooms';
 import type { PlayMode, RepeatMode } from '@/stores/player';
+
+/** 房间镜像：顶部「一起听」徽标和悬浮窗要的字段，别的房间状态弹出窗口用不上。 */
+export interface NowPlayingRoomSnapshot {
+  code: string | null;
+  members: RoomMember[];
+  /** 本机是否只是旁观（决定徽标显不显示「一起听」）。 */
+  spectating: boolean;
+  /** 已经推演到快照时刻的秒数：弹出窗口不重复做服务端时钟推算。 */
+  togetherSeconds: number;
+  togetherSessionSeconds: number;
+}
 
 /**
  * 主窗口 → 弹出式播放窗口的播放快照。
@@ -32,4 +44,6 @@ export interface NowPlayingSnapshot {
   audioCache: 'full' | 'partial' | null;
   /** 当前播放页样式 id，弹出窗口内换样式要同步回主窗口。 */
   nowPlayingMode: string;
+  /** 一起听房间：徽标与悬浮窗（两人对置、本次/累计时长）都从这份镜像取。 */
+  room: NowPlayingRoomSnapshot;
 }

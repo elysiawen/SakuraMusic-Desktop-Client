@@ -25,8 +25,11 @@ const toast = useToast();
 const player = usePlayerStore();
 const room = useRoomStore();
 const busy = ref(false);
-/** 私人电台与「一起听」互斥：房间激活（含旁观）时本卡片不可用。 */
-const blocked = computed(() => room.active);
+/**
+ * 私人电台只与「本机占着一起听席位」互斥：同账号另一台设备在放时本机是旁观，
+ * 播放器仍归自己用，电台照常可点、可续播。
+ */
+const blocked = computed(() => room.seatActive);
 
 const tracks = computed<UnifiedTrack[]>(() => (props.section?.items ?? []) as UnifiedTrack[]);
 const lead = computed(() => tracks.value[0] ?? null);
@@ -56,7 +59,7 @@ const caption = computed(() => {
 const active = computed(() => player.radio?.platform === props.platform && player.radio.hasMore);
 
 const note = computed(() => {
-  if (blocked.value) return '正在「一起听」中，退出后可用';
+  if (blocked.value) return '本机正在「一起听」中，退出后可用';
   return `${source.value} · ${active.value ? '正在播放，自动续播中' : '自动续播'}`;
 });
 
@@ -70,10 +73,10 @@ async function start(): Promise<void> {
   }
 }
 
-/** 给用户一个明确的出口：退出电台后「一起听」才可用。 */
+/** 给用户一个明确的出口：退出电台后，本机就能占「一起听」席位。 */
 function stop(): void {
   player.stopRadio();
-  toast.info('已退出私人电台，现在可以使用「一起听」');
+  toast.info('已退出私人电台，现在可以把「一起听」接到本机');
 }
 </script>
 
@@ -92,7 +95,7 @@ function stop(): void {
             class="radio-play"
             type="button"
             :disabled="busy || blocked"
-            :title="blocked ? '正在「一起听」中，请先退出' : `开始${source}`"
+            :title="blocked ? '本机正在「一起听」中，请先退出' : `开始${source}`"
             @click="start"
           >
             <AppIcon

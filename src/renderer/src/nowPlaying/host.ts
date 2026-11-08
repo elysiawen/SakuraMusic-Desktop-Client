@@ -47,6 +47,14 @@ export function initNowPlayingHost(): void {
       usingShared: player.usingShared,
       audioCache: player.audioCache,
       nowPlayingMode: ui.nowPlayingMode,
+      // 时长按快照时刻推演成整秒再推：弹出窗口没有服务端时钟，不能自己再算一遍。
+      room: {
+        code: room.code,
+        members: room.members,
+        spectating: room.spectating,
+        togetherSeconds: Math.floor(room.togetherLive()),
+        togetherSessionSeconds: Math.floor(room.togetherSessionLive()),
+      },
     };
     // 过一道 JSON：顺手把响应式代理摊平，跨进程序列化万无一失。
     return JSON.parse(JSON.stringify(state));

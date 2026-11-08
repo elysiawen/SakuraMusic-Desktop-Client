@@ -7,7 +7,9 @@ import TrackList from '@/components/music/TrackList.vue';
 import GridSkeleton from '@/components/skeleton/GridSkeleton.vue';
 import TrackRowsSkeleton from '@/components/skeleton/TrackRowsSkeleton.vue';
 import { musicApi } from '@/api';
+import { PLATFORM_LABEL, PLATFORMS } from '@/api/types';
 import type {
+  Platform,
   PlatformStatus,
   PlaylistSummary,
   SearchResult,
@@ -30,6 +32,34 @@ const TYPES: Array<{ id: SearchType; label: string }> = [
   { id: 'album', label: '专辑' },
   { id: 'playlist', label: '歌单' },
 ];
+
+/** 左侧的平台维度：与右侧的「歌曲/歌手/...」是两个独立的筛选轴。 */
+type PlatformTab = Platform | 'all';
+
+/** 设置里仍启用「搜索」能力的平台（平台总开关 + 能力开关都算）。 */
+const enabledSearchPlatforms = computed<Platform[]>(() =>
+  PLATFORMS.filter((platform) => preferences.isEnabled(platform, 'search')),
+);
+
+/**
+ * 只剩一个平台时没有切换的必要（「全部」和它等价，另一个又被关掉了）。
+ * 这时左边不放一排没得点的页签，改成一个静态的「当前平台」标识：
+ * 既说清结果来自哪儿，也不至于让左半边空着。
+ */
+const soloPlatform = computed<Platform | null>(() =>
+  enabledSearchPlatforms.value.length === 1 ? enabledSearchPlatforms.value[0] : null,
+);
+
+/** 两个平台都开着才需要页签；被关掉的不占位。 */
+const platformTabs = computed<Array<{ id: PlatformTab; label: string }>>(() => [
+  { id: 'all', label: '全部' },
+  ...enabledSearchPlatforms.value.map((platform) => ({
+    id: platform as PlatformTab,
+    label: PLATFORM_LABEL[platform],
+  })),
+]);
+
+const activePlatform = ref<PlatformTab>('all');
 
 /**
  * 每页条数与 web 端一致（20）。
@@ -97,7 +127,7 @@ async function run(): Promise<void> {
       type.value,
       page.value,
       PAGE_SIZE,
-      preferences.enabledParam('search'),
+      searchPlatforms(),
     );
     if (token !== requestToken) return;
     result.value = response;
@@ -125,6 +155,29 @@ function goPage(next: number): void {
 function chooseType(next: SearchType): void {
   if (next === type.value) return;
   type.value = next;
+  result.value = null;
+  page.value = 1;
+  if (keyword.value.trim()) void run();
+}
+
+/**
+ * 平台页签只决定这一轮检索取哪些平台，不越过设置里的平台开关：
+ * 「全部」沿用 `enabledParam`（尊重用户在设置里的取舍），选中单平台则把该平台
+ * 交给网关，让它按单平台取页、排序和分页都按那边算；前提是这个平台仍然启用。
+ * 已关掉时回落到「全部」：下面的 watch 会随即把选中态切回去，这里兜住时间差。
+ */
+function searchPlatforms(): string | undefined {
+  const fallback = preferences.enabledParam('search');
+  const picked = activePlatform.value;
+  if (picked === 'all' || !preferences.isEnabled(picked, 'search')) return fallback;
+  return picked;
+}
+
+function choosePlatform(next: PlatformTab): void {
+  if (next === activePlatform.value) return;
+  // 置灰的按钮本来就点不动，这里再兜一层，防止键盘 / 程序化触发绕过开关。
+  if (next !== 'all' && !preferences.isEnabled(next, 'search')) return;
+  activePlatform.value = next;
   result.value = null;
   page.value = 1;
   if (keyword.value.trim()) void run();
@@ -195,8 +248,23 @@ watch(keyword, () => {
   }, 380);
 });
 
+/**
+ * 正在看的平台被关掉（在设置页改的、云端偏好同步下来），或平台少到只剩一个
+ * 不必再切换时，自动回到「全部」并重新检索，免得选中态停在一个不显示的页签上。
+ */
+watch(enabledSearchPlatforms, (list) => {
+  const picked = activePlatform.value;
+  if (picked === 'all' || (list.length > 1 && list.includes(picked))) return;
+  activePlatform.value = 'all';
+  result.value = null;
+  page.value = 1;
+  if (keyword.value.trim()) void run();
+});
+
 onMounted(() => {
   window.addEventListener('sakura:search', applyKeyword);
+  // 页签依赖设置里的开关：store 有本地缓存兜底，这里再拉一次云端让开关状态收敛。
+  void preferences.ensureInitialized();
 });
 
 onBeforeUnmount(() => {
@@ -207,27 +275,54 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="search-view">
-    <!-- 页内不放搜索框了：搜索统一从顶栏输入，这里只负责分类型看结果 -->
-    <div class="type-bar">
-      <nav class="type-tabs" role="tablist" aria-label="搜索类型">
+    <!-- 平台维度在左、内容类型在右，两个轴各自独立；切换任一个都回第一页重查。 -->
+    <div class="filter-bar">
+      <!-- 只剩一个平台：左边留一个当前平台标识，不必摆一排没得切的页签。 -->
+      <div
+        v-if="soloPlatform"
+        class="platform-solo"
+        :title="`当前只启用了${PLATFORM_LABEL[soloPlatform]}的搜索`"
+      >
+        <span class="platform-dot" :class="`dot-${soloPlatform}`" />
+        <span>{{ PLATFORM_LABEL[soloPlatform] }}</span>
+        <span class="platform-solo-hint">当前平台</span>
+      </div>
+      <nav v-else class="type-tabs" role="tablist" aria-label="搜索平台">
         <button
-          v-for="item in TYPES"
+          v-for="item in platformTabs"
           :key="item.id"
           type="button"
           role="tab"
           class="type-tab"
-          :class="{ active: type === item.id }"
-          :aria-selected="type === item.id"
-          @click="chooseType(item.id)"
+          :class="{ active: activePlatform === item.id }"
+          :aria-selected="activePlatform === item.id"
+          @click="choosePlatform(item.id)"
         >
           {{ item.label }}
         </button>
       </nav>
-      <!-- 请求可能很快，也可能要等上游：立刻给一个「在搜」的信号，别让界面看起来卡住 -->
-      <span v-if="loading" class="searching">
-        <AppIcon name="refresh" :size="11" class="spin" />
-        正在搜索{{ searched ? `「${searched}」` : '' }}…
-      </span>
+
+      <div class="filter-right">
+        <!-- 请求可能很快，也可能要等上游：立刻给一个「在搜」的信号，别让界面看起来卡住 -->
+        <span v-if="loading" class="searching">
+          <AppIcon name="refresh" :size="11" class="spin" />
+          正在搜索{{ searched ? `「${searched}」` : '' }}…
+        </span>
+        <nav class="type-tabs" role="tablist" aria-label="搜索类型">
+          <button
+            v-for="item in TYPES"
+            :key="item.id"
+            type="button"
+            role="tab"
+            class="type-tab"
+            :class="{ active: type === item.id }"
+            :aria-selected="type === item.id"
+            @click="chooseType(item.id)"
+          >
+            {{ item.label }}
+          </button>
+        </nav>
+      </div>
     </div>
 
     <ErrorState v-if="error" :message="error" @retry="run" />
@@ -240,7 +335,7 @@ onBeforeUnmount(() => {
     <section v-else-if="!searched" class="state">
       <span class="state-disc"><AppIcon name="search" :size="26" :stroke-width="1.3" /></span>
       <h2>想听点什么</h2>
-      <p>在窗口顶部的搜索框输入歌名、歌手或专辑，结果会按两个平台聚合到这里。</p>
+      <p>在窗口顶部的搜索框输入歌名、歌手或专辑，左侧可以切换只看网易云或 QQ 音乐。</p>
     </section>
 
     <section v-else-if="!hasResults" class="state">
@@ -366,12 +461,20 @@ onBeforeUnmount(() => {
   animation: fade-up var(--dur-slow) var(--ease);
 }
 
-.type-bar {
+.filter-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+/* 右组：类型页签始终贴右，「正在搜索」在它左边；窄屏时整组换行。 */
+.filter-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
 }
 
 .searching {
@@ -386,7 +489,7 @@ onBeforeUnmount(() => {
 
 .type-tabs {
   display: inline-flex;
-  align-self: flex-start;
+  flex: none;
   gap: 3px;
   padding: 3px;
   border: 1px solid var(--border);
@@ -413,6 +516,44 @@ onBeforeUnmount(() => {
 .type-tab.active {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* 只剩一个平台时左边的静态标识：与页签组等高、同款胶囊，但不做成可点按钮。 */
+.platform-solo {
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 34px;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg) 40%, var(--surface));
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.platform-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.platform-dot.dot-netease {
+  background: #e0413f;
+}
+
+.platform-dot.dot-qq {
+  background: #3cc77f;
+}
+
+.platform-solo-hint {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 400;
 }
 
 .card-grid {

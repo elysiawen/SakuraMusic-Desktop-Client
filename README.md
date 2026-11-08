@@ -43,6 +43,7 @@ All five share one shell for expand / collapse and cross-fade. Everything is ren
 **Listen Together & Devices**
 - Server-authoritative playback in rooms: the local player is mirrored back every 250 ms, so transport actions are reported to the server instead of being applied locally
 - Multi-device follow / remote control
+- Personal radio is mutually exclusive with Listen Together **only on the device holding the room seat**: a spectator device (another device on the same account is playing) can still start and continue its own radio; creating / joining / taking the seat back still requires leaving the radio first
 
 **Interaction conventions**
 - All browsing lists share one track row implementation: a three-dot button or right-click opens the same menu, with "Add to playlist" kept in a submenu

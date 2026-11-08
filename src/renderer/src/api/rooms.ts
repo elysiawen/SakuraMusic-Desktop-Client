@@ -183,6 +183,45 @@ export interface RoomActionPayload {
   accept?: boolean;
 }
 
+/** 一起听总览里的一位伙伴。 */
+export interface TogetherPartner {
+  userId: string;
+  nickname: string;
+  avatar: string | null;
+  /** 和这位伙伴的累计一起听时长（秒）。 */
+  seconds: number;
+  /** 最近一次一起听的时间（ISO 字符串）。 */
+  lastAt: string;
+}
+
+/** 我的一起听总览（账户中心用）。 */
+export interface TogetherOverview {
+  /** 与所有人累计的一起听时长（秒）。 */
+  totalSeconds: number;
+  partnerCount: number;
+  /** 按累计时长倒序。 */
+  partners: TogetherPartner[];
+  /** 一起听过的次数；服务端明细表不在时为 null（界面少显示一个数字即可）。 */
+  sessionCount: number | null;
+}
+
+/** 一次「一起听」的明细。 */
+export interface TogetherSessionItem {
+  /** 这一次一起听的开始时间（ISO 字符串）。 */
+  startedAt: string;
+  seconds: number;
+}
+
+/** 某位伙伴的详细一起听记录。 */
+export interface TogetherPartnerDetail {
+  partner: { userId: string; nickname: string; avatar: string | null };
+  /** 与这位伙伴的累计一起听时长（秒）。 */
+  totalSeconds: number;
+  sessionCount: number | null;
+  /** 最近的在前；明细表不在时为 null，那时只有累计可用。 */
+  sessions: TogetherSessionItem[] | null;
+}
+
 export const roomApi = {
   create: (input: {
     deviceId: string;
@@ -252,4 +291,11 @@ export const roomApi = {
   }) => apiRequest<RoomSource>('/api/rooms/source', { method: 'POST', body: input }),
 
   preview: (code: string) => apiRequest<RoomPreview>(`/api/rooms/${encodeURIComponent(code)}`),
+
+  /** 我的一起听总览（账户中心用）。 */
+  overview: () => apiRequest<TogetherOverview>('/api/rooms/overview'),
+
+  /** 某位伙伴的详细一起听记录。 */
+  partnerDetail: (partnerId: string) =>
+    apiRequest<TogetherPartnerDetail>(`/api/rooms/overview/${encodeURIComponent(partnerId)}`),
 };
