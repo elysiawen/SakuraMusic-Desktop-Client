@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import AppIcon from '@/components/common/AppIcon.vue';
-import type { UnifiedTrack } from '@/api/types';
+import {
+  PREMIUM_QUALITIES,
+  qualityLabel,
+  qualityMenuLabel,
+  type Quality,
+  type UnifiedTrack,
+} from '@/api/types';
+import { QUALITY_ORDER } from '@/utils/track';
 import { useToast } from '@/composables/useToast';
 import { useTransport } from '@/composables/useTransport';
 import { useLibraryStore } from '@/stores/library';
@@ -38,11 +45,12 @@ const offline = useOfflineStore();
 const toast = useToast();
 
 const MARGIN = 8;
-const SUBMENU_WIDTH = 190;
-const SUBMENU_MAX_HEIGHT = 240;
+const SUBMENU_WIDTH = 210;
+const SUBMENU_MAX_HEIGHT = 300;
 
 const menuRef = ref<HTMLElement | null>(null);
-const submenuOpen = ref(false);
+/** 两个二级菜单共用一套展开状态，鼠标从一项挪到另一项时直接切换。 */
+const activeSubmenu = ref<'playlist' | 'quality' | null>(null);
 /** 第一帧先藏起来，量完再显示，免得菜单先在 (x, y) 闪一下再跳到夹好的位置。 */
 const style = ref<Record<string, string>>({
   left: `${props.x}px`,
@@ -78,18 +86,18 @@ function place(): void {
 /** 二级菜单：hover 展开，留一点延时让鼠标能跨过主菜单与子菜单之间那点间隙。 */
 let submenuTimer: number | undefined;
 
-function openSubmenu(): void {
+function openSubmenu(name: 'playlist' | 'quality'): void {
   if (submenuTimer !== undefined) {
     window.clearTimeout(submenuTimer);
     submenuTimer = undefined;
   }
-  submenuOpen.value = true;
+  activeSubmenu.value = name;
 }
 
 function scheduleCloseSubmenu(): void {
   if (submenuTimer !== undefined) window.clearTimeout(submenuTimer);
   submenuTimer = window.setTimeout(() => {
-    submenuOpen.value = false;
+    activeSubmenu.value = null;
     submenuTimer = undefined;
   }, 160);
 }
@@ -127,12 +135,54 @@ const downloadLabel = computed(() => {
   return offline.has(key) ? '重新下载' : '下载到本地';
 });
 
-async function download(): Promise<void> {
+/** 下载菜单按曲目自身的平台显示档位名（QQ 侧叫 HQ / SQ / 臻品…）。 */
+const platform = computed(() => props.track.sources[0]?.platform);
+
+/** 默认那一档：设置里固定了就用固定值，否则跟着播放音质走。 */
+const defaultQuality = computed(() => offline.resolveDownloadQuality(player.quality));
+const defaultQualityLabel = computed(() => qualityLabel(defaultQuality.value, platform.value));
+
+/** 只列这首歌真有的档位；不知道有哪些档时列全档，并把当前默认档也带上。 */
+const qualityOptions = computed(() => {
+  const available = props.track.qualities;
+  const listed = available?.length
+    ? QUALITY_ORDER.filter((item) => available.includes(item))
+    : QUALITY_ORDER;
+  const values = QUALITY_ORDER.filter(
+    (item) => listed.includes(item) || item === defaultQuality.value,
+  );
+  return values.map((value) => ({
+    value,
+    label: qualityMenuLabel(value, platform.value),
+    hint: hintOf(value),
+    isDefault: value === defaultQuality.value,
+  }));
+});
+
+/** 体积 · 会员标记；平台没给体积就只标会员档。 */
+function hintOf(quality: Quality): string {
+  const bytes = props.track.qualitySizes?.[quality];
+  const parts: string[] = [];
+  if (bytes) parts.push(`${(bytes / 1024 / 1024).toFixed(1)}M`);
+  if (PREMIUM_QUALITIES.includes(quality)) parts.push('需会员');
+  return parts.join(' · ');
+}
+
+/** 不传档位 = 按默认设置一键下载；传了就是这首歌临时指定。 */
+async function download(quality?: Quality): Promise<void> {
   const track = props.track;
   close();
+  const requested = quality ?? defaultQuality.value;
   try {
-    await offline.download(track, player.quality);
-    toast.success(`「${track.title}」已下载到本地`);
+    const result = await offline.download(track, requested);
+    const actual = (result.actualQuality || requested) as Quality;
+    const label = qualityLabel(actual, platform.value);
+    const degraded = Boolean(result.actualQuality && result.actualQuality !== requested);
+    toast.success(
+      degraded
+        ? `「${track.title}」已按${label}下载（平台没有${qualityLabel(requested, platform.value)}，已自动降级）`
+        : `「${track.title}」已按${label}下载到本地`,
+    );
   } catch (caught) {
     toast.error(caught instanceof Error ? caught.message : '下载失败');
   }
@@ -183,15 +233,58 @@ async function addToPlaylist(id: string, name: string): Promise<void> {
       {{ library.isFavorite(track) ? '取消收藏' : '收藏' }}
     </button>
 
-    <button
-      type="button"
-      class="menu-item"
-      :disabled="offline.isDownloading(track.key)"
-      @click.stop="download"
+    <!--
+      下载：点左侧按默认音质直接下，hover / 点箭头展开二级菜单为这一首临时选音质。
+      两个二级菜单共用 activeSubmenu，不会同时展开。
+    -->
+    <div
+      class="menu-item has-submenu"
+      :class="{ 'is-open': activeSubmenu === 'quality' }"
+      @mouseenter="openSubmenu('quality')"
+      @mouseleave="scheduleCloseSubmenu"
+      @click.stop="openSubmenu('quality')"
     >
-      <AppIcon name="download" :size="13" />
-      {{ downloadLabel }}
-    </button>
+      <button
+        type="button"
+        class="menu-action"
+        :disabled="offline.isDownloading(track.key)"
+        @click.stop="download()"
+      >
+        <AppIcon name="download" :size="13" />
+        <span class="menu-name">{{ downloadLabel }}</span>
+      </button>
+      <button
+        type="button"
+        class="submenu-toggle"
+        :disabled="offline.isDownloading(track.key)"
+        aria-label="选择下载音质"
+      >
+        <AppIcon name="chevron-right" :size="12" />
+      </button>
+
+      <div
+        class="submenu popover quality-submenu"
+        :class="{ 'flip-x': flipX, 'flip-y': flipY }"
+        @mouseenter="openSubmenu('quality')"
+        @mouseleave="scheduleCloseSubmenu"
+      >
+        <p class="submenu-title">选择下载音质</p>
+        <button
+          v-for="option in qualityOptions"
+          :key="option.value"
+          type="button"
+          class="menu-item quality-option"
+          :class="{ 'is-default': option.isDefault }"
+          :disabled="offline.isDownloading(track.key)"
+          @click.stop="download(option.value)"
+        >
+          <span class="menu-name">{{ option.label }}</span>
+          <small v-if="option.hint" class="quality-hint">{{ option.hint }}</small>
+          <AppIcon v-if="option.isDefault" name="check" :size="12" />
+        </button>
+        <p class="menu-note">默认：{{ defaultQualityLabel }}。平台没有所选档位时会自动降级。</p>
+      </div>
+    </div>
 
     <button
       v-if="offline.has(track.key)"
@@ -219,10 +312,10 @@ async function addToPlaylist(id: string, name: string): Promise<void> {
     -->
     <div
       class="menu-item has-submenu"
-      :class="{ 'is-open': submenuOpen }"
-      @mouseenter="openSubmenu"
+      :class="{ 'is-open': activeSubmenu === 'playlist' }"
+      @mouseenter="openSubmenu('playlist')"
       @mouseleave="scheduleCloseSubmenu"
-      @click.stop="openSubmenu"
+      @click.stop="openSubmenu('playlist')"
     >
       <AppIcon name="list" :size="13" />
       <span class="menu-name">添加到歌单</span>
@@ -231,7 +324,7 @@ async function addToPlaylist(id: string, name: string): Promise<void> {
       <div
         class="submenu popover"
         :class="{ 'flip-x': flipX, 'flip-y': flipY }"
-        @mouseenter="openSubmenu"
+        @mouseenter="openSubmenu('playlist')"
         @mouseleave="scheduleCloseSubmenu"
       >
         <p v-if="library.playlists.length === 0" class="menu-empty">还没有本地歌单</p>
@@ -303,7 +396,39 @@ async function addToPlaylist(id: string, name: string): Promise<void> {
   font-size: 10px;
 }
 
-/* ---------------- 二级：添加到歌单 ---------------- */
+/* 一级里的「下载」拆成「直接下载」+「展开音质」两块，避免多一次弹窗。 */
+.menu-action,
+.submenu-toggle {
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.menu-action {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+}
+
+.submenu-toggle {
+  display: grid;
+  width: 18px;
+  flex: none;
+  place-items: center;
+  color: var(--text-faint);
+}
+
+.menu-action:disabled,
+.submenu-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ---------------- 二级：添加到歌单 / 下载音质 ---------------- */
 .has-submenu {
   position: relative;
   cursor: pointer;
@@ -341,5 +466,42 @@ async function addToPlaylist(id: string, name: string): Promise<void> {
 .submenu.flip-y {
   top: auto;
   bottom: -6px;
+}
+
+.quality-submenu {
+  width: 210px;
+  max-height: 300px;
+}
+
+.submenu-title {
+  padding: 3px 9px 5px;
+  color: var(--text-faint);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.quality-option {
+  gap: 6px;
+}
+
+.quality-option.is-default {
+  color: var(--accent);
+}
+
+.quality-hint {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.menu-note {
+  margin-top: 4px;
+  padding: 7px 9px 2px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 9.5px;
+  line-height: 1.5;
 }
 </style>

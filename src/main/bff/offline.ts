@@ -1,7 +1,7 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { URL } from 'node:url';
-import type { OfflineDownloadRequest } from '@shared/offline';
+import { OFFLINE_QUALITIES, type OfflineDownloadRequest } from '@shared/offline';
 import { downloadTrack, type DownloadProgress } from '../offline/download';
 import {
   clearItems,
@@ -121,6 +121,7 @@ function isDownloadRequest(
     (value.platform === 'netease' || value.platform === 'qq') &&
     typeof value.id === 'string' &&
     typeof value.quality === 'string' &&
+    OFFLINE_QUALITIES.includes(value.quality as (typeof OFFLINE_QUALITIES)[number]) &&
     typeof value.title === 'string' &&
     Array.isArray(value.artists)
   );

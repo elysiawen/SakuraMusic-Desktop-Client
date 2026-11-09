@@ -4,6 +4,7 @@ import AppIcon from '@/components/common/AppIcon.vue';
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import TrackMoreMenu from './TrackMoreMenu.vue';
 import type { UnifiedTrack } from '@/api/types';
+import { usePopoverDragGuard } from '@/composables/usePopoverDragGuard';
 import { useToast } from '@/composables/useToast';
 import { useTransport } from '@/composables/useTransport';
 import { useLibraryStore } from '@/stores/library';
@@ -58,6 +59,8 @@ interface MenuState {
 }
 
 const menu = ref<MenuState | null>(null);
+// 菜单开着时标题栏不能当拖动区使，否则点它收不掉菜单（drag 区不派发 pointerdown）。
+usePopoverDragGuard(() => menu.value !== null);
 let menuSeq = 0;
 const MENU_WIDTH = 200;
 const MENU_GAP = 6;

@@ -2,8 +2,28 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { offlineApi, openProgressEvents, type OfflineProgressEvent } from '@/api/offline';
 import type { OfflineItem } from '@shared/offline';
-import type { Quality, UnifiedTrack } from '@/api/types';
+import { QUALITY_LABEL, type Quality, type UnifiedTrack } from '@/api/types';
 import { formatBytes } from '@/utils/format';
+
+/** `follow` = 跟随播放器的默认音质；其余档位是下载专用的固定值。 */
+export type DownloadQuality = Quality | 'follow';
+
+const DOWNLOAD_QUALITY_KEY = 'sakura.offline.quality';
+
+function isDownloadQuality(value: unknown): value is DownloadQuality {
+  return value === 'follow' || (typeof value === 'string' && value in QUALITY_LABEL);
+}
+
+function loadDownloadQuality(): DownloadQuality {
+  try {
+    const raw = localStorage.getItem(DOWNLOAD_QUALITY_KEY);
+    if (!raw) return 'follow';
+    const value: unknown = JSON.parse(raw);
+    return isDownloadQuality(value) ? value : 'follow';
+  } catch {
+    return 'follow';
+  }
+}
 
 /**
  * 本地下载库。
@@ -20,6 +40,22 @@ export const useOfflineStore = defineStore('offline', () => {
   const downloading = ref<Record<string, boolean>>({});
   /** 下载进度（来自本地 BFF 的 SSE）。 */
   const progress = ref<Record<string, OfflineProgressEvent>>({});
+  /** 默认下载音质；`follow` 时每次下载取播放器当前音质。 */
+  const downloadQuality = ref<DownloadQuality>(loadDownloadQuality());
+
+  function setDownloadQuality(value: DownloadQuality): void {
+    downloadQuality.value = value;
+    try {
+      localStorage.setItem(DOWNLOAD_QUALITY_KEY, JSON.stringify(value));
+    } catch {
+      // 存储不可写时只保留本次会话的选择。
+    }
+  }
+
+  /** 下载时用哪一档。单曲菜单里临时指定的档位优先。 */
+  function resolveDownloadQuality(playQuality: Quality): Quality {
+    return downloadQuality.value === 'follow' ? playQuality : downloadQuality.value;
+  }
 
   const keys = computed(() => new Set(items.value.map((item) => item.key)));
   const byKey = computed(() => new Map(items.value.map((item) => [item.key, item])));
@@ -133,6 +169,9 @@ export const useOfflineStore = defineStore('offline', () => {
     error,
     downloading,
     progress,
+    downloadQuality,
+    setDownloadQuality,
+    resolveDownloadQuality,
     activeDownloads,
     keys,
     byKey,

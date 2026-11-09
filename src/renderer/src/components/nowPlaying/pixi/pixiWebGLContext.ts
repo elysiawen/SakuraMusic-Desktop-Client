@@ -11,7 +11,11 @@ type PixiModule = typeof import('pixi.js');
 /** The init options that decide the context's attributes (GlContextSystem.init). */
 type ContextOptions = Pick<ApplicationOptions, 'backgroundAlpha' | 'antialias' | 'useBackBuffer' | 'powerPreference'>;
 
-/** The extensions Pixi 8.21's GlContextSystem.getExtensions asks a WebGL 2 context for, in its order. */
+/**
+ * The extensions Pixi 8.2x's GlContextSystem.getExtensions asks a WebGL 2 context for, in its order.
+ * Pre-enabling an extra one is harmless (`getExtension` answers null); missing one only costs the
+ * roundtrip Pixi would have paid anyway, so this list never has to match a version exactly.
+ */
 const PIXI_EXTENSIONS = [
     'EXT_texture_filter_anisotropic',
     'OES_texture_float_linear',
@@ -41,40 +45,58 @@ const cancelled = () => new DOMException('Pixi context creation was cancelled', 
 /**
  * `{ canvas, context }` to add to Pixi's init options: a WebGL 2 context with the attributes Pixi
  * would ask for with `options`, its extensions on, made in a task of its own. Empty (Pixi makes the
- * context itself, as before) for another Pixi version and where WebGL 2 is not there. Throws an
- * AbortError when `signal` is aborted meanwhile, the context given back.
+ * context itself, as before) where a WebGL 2 context cannot be made. Throws an AbortError when
+ * `signal` is aborted meanwhile, the context given back.
+ *
+ * Capability-based, not version-gated: 8.21 / 8.22 的 GlContextSystem 都吃 `options.context` +
+ * `options.canvas`，扩展列表也一致。就算将来 Pixi 不认这两个选项，它只是自己另建一个上下文，
+ * 不会画错；少预开一两个扩展也只是回退到原来的首帧耗时。
  */
 export const makePixiContext = async (
     pixi: PixiModule,
     options: ContextOptions,
     signal?: AbortSignal,
 ): Promise<{ canvas?: HTMLCanvasElement; context?: WebGL2RenderingContext }> => {
-    if ((pixi.VERSION as string) !== '8.21.0') return {};
+    if (pixi.RendererType?.WEBGL === undefined) return {};
     await nextTask();
     if (signal?.aborted) throw cancelled();
     const canvas = document.createElement('canvas');
     // What GlContextSystem.init passes to getContext, with its defaults: premultiplied alpha, no
     // preserved drawing buffer; a back buffer takes the antialiasing over.
-    const context = canvas.getContext('webgl2', {
-        alpha: (options.backgroundAlpha ?? 1) < 1,
-        premultipliedAlpha: true,
-        antialias: Boolean(options.antialias) && !options.useBackBuffer,
-        stencil: true,
-        preserveDrawingBuffer: false,
-        powerPreference: options.powerPreference ?? 'default',
-    });
+    let context: WebGL2RenderingContext | null = null;
+    try {
+        context = canvas.getContext('webgl2', {
+            alpha: (options.backgroundAlpha ?? 1) < 1,
+            premultipliedAlpha: true,
+            antialias: Boolean(options.antialias) && !options.useBackBuffer,
+            stencil: true,
+            preserveDrawingBuffer: false,
+            powerPreference: options.powerPreference ?? 'default',
+        });
+    } catch {
+        return {};
+    }
     if (!context) return {};
+    const gl = context;
     let started = performance.now();
     for (const name of PIXI_EXTENSIONS) {
         if (performance.now() - started > TASK_MS) {
             await nextTask();
             if (signal?.aborted) {
-                context.getExtension('WEBGL_lose_context')?.loseContext();
+                try {
+                    gl.getExtension('WEBGL_lose_context')?.loseContext();
+                } catch {
+                    // The context is going away with the renderer anyway.
+                }
                 throw cancelled();
             }
             started = performance.now();
         }
-        context.getExtension(name);
+        try {
+            gl.getExtension(name);
+        } catch {
+            // An extension this driver refuses outright: Pixi asks again on its own context.
+        }
     }
-    return { canvas, context };
+    return { canvas, context: gl };
 };

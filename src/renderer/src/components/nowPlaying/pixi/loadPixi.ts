@@ -32,6 +32,15 @@ type PixiModule = typeof import('pixi.js');
  * compiled sources, so a program built before the flip would keep its mediump variant.
  */
 export const loadPixi = async (): Promise<PixiModule> => {
+    // 生产包由主进程 BFF 托管页面，HTML 带 `script-src 'self'`（无 'unsafe-eval'）；开发时页面由
+    // Vite 提供，没有这条 CSP。Pixi 默认用 `new Function` 生成 uniform / shader / UBO 同步函数，
+    // 并在 AbstractRenderer 与 UboSystem 构造时先检查 eval 是否可用——发布包里这一步直接抛错，
+    // 外壳接住异常后退回纯文字，于是绘光只剩一句静态歌词（dev 正常、release 失效的根因）。
+    //
+    // 官方 `pixi.js/unsafe-eval` 的副作用会覆盖这两处检查，并把生成器换成不依赖 eval 的实现。
+    // 它改的是 prototype，必须在构造任何 Application / Filter / GlProgram 之前加载完。
+    // 这样既能保留严格 CSP，也不需要在生产环境放开 'unsafe-eval'。
+    await import('pixi.js/unsafe-eval');
     const pixi = await import('pixi.js');
     pixi.GlProgram.defaultOptions.preferredFragmentPrecision = 'highp';
     installPixiFilterPoolCompat(pixi);

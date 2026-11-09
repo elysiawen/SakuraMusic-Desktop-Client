@@ -9,7 +9,19 @@ import {
   type GatewayClientOptions,
 } from '../bff/gateway';
 import { getConfig } from '../config/store';
-import { downloadRoot, finalSize, upsertItem, type StoredOfflineItem } from './store';
+import {
+  detectAudioFormat,
+  isNonAudioPayload,
+  normalizeMime,
+  readHead,
+} from './format';
+import {
+  downloadRoot,
+  finalSize,
+  findItem,
+  upsertItem,
+  type StoredOfflineItem,
+} from './store';
 
 /**
  * 下载一首歌到本地。
@@ -17,6 +29,9 @@ import { downloadRoot, finalSize, upsertItem, type StoredOfflineItem } from './s
  * 走的是和播放同一条路：`/api/play/resolve` 拿地址 → 优先直连 CDN（附带防盗链头）
  * → 失败回退网关流。文件先写 `.part`，完整写完才改名为正式文件并登记索引，
  * 中途断掉不会留下一个能被索引到的半成品。
+ *
+ * 扩展名由写完的文件头决定（见 format.ts），不再依赖 CDN 的 Content-Type ——
+ * 无损流常被标成 `application/octet-stream`，以前会落成 `.bin`。
  */
 
 interface DirectTarget {
@@ -28,11 +43,16 @@ interface ResolvedSource {
   /** 网关路径（`/api/stream?...`）。 */
   url?: string;
   direct?: DirectTarget;
+  /** 平台实际给的档位：会员/版权不够时与请求的音质不同。 */
+  actualQuality?: string;
 }
 
 interface WrittenFile {
+  /** 上游原始的 Content-Type（可能不准，只作为兜底线索）。 */
   mime: string;
   bytes: number;
+  /** 实际取流的地址，用于后缀兜底。 */
+  sourceUrl: string;
 }
 
 /** 下载进度：`total` 为 0 表示上游没给长度，界面上按不确定进度处理。 */
@@ -42,32 +62,9 @@ export interface DownloadProgress {
   total: number;
 }
 
-const MIME_EXT: Record<string, string> = {
-  'audio/mpeg': 'mp3',
-  'audio/mp3': 'mp3',
-  'audio/mp4': 'm4a',
-  'audio/x-m4a': 'm4a',
-  'audio/aac': 'aac',
-  'audio/flac': 'flac',
-  'audio/x-flac': 'flac',
-  'audio/ogg': 'ogg',
-  'audio/wav': 'wav',
-  'audio/x-wav': 'wav',
-  'audio/webm': 'webm',
-};
-
 function clientOptions(): GatewayClientOptions {
   const config = getConfig();
   return { baseUrl: config.baseUrl, allowInvalidCert: config.allowInvalidCert };
-}
-
-function normalizeMime(value: string | string[] | undefined): string {
-  const raw = Array.isArray(value) ? value[0] : value;
-  return (raw ?? 'audio/mpeg').split(';')[0]?.trim().toLowerCase() || 'audio/mpeg';
-}
-
-function extensionFor(mime: string): string {
-  return MIME_EXT[mime] ?? 'bin';
 }
 
 /** 文件名去掉 Windows/macOS 不接受的字符，再截断，避免超长路径。 */
@@ -111,6 +108,7 @@ function writeToFile(
   stream: IncomingMessage,
   path: string,
   key: string,
+  sourceUrl: string,
   onProgress?: (progress: DownloadProgress) => void,
 ): Promise<WrittenFile> {
   return new Promise((resolve, reject) => {
@@ -138,7 +136,11 @@ function writeToFile(
     });
     output.on('finish', () => {
       onProgress?.({ key, received: bytes, total: total || bytes });
-      resolve({ mime: normalizeMime(stream.headers['content-type']), bytes });
+      resolve({
+        mime: normalizeMime(stream.headers['content-type']),
+        bytes,
+        sourceUrl,
+      });
     });
 
     stream.pipe(output);
@@ -155,7 +157,9 @@ async function fetchToFile(
     try {
       const target = new URL(source.direct.url);
       const direct = await openDirect(target, source.direct.headers ?? {}, 'GET', undefined, 3);
-      if (direct) return await writeToFile(direct.stream, path, key, onProgress);
+      if (direct) {
+        return await writeToFile(direct.stream, path, key, source.direct.url, onProgress);
+      }
     } catch {
       // 直连失败就落到网关，和播放时的回退策略一致。
     }
@@ -174,7 +178,7 @@ async function fetchToFile(
     throw new Error(`音频源返回 ${upstream.status}`);
   }
 
-  return writeToFile(upstream.stream, path, key, onProgress);
+  return writeToFile(upstream.stream, path, key, source.url, onProgress);
 }
 
 export async function downloadTrack(
@@ -200,9 +204,21 @@ export async function downloadTrack(
     throw new Error('下载到的文件是空的，请换个音质再试');
   }
 
-  const fileName = `${base}.${extensionFor(written.mime)}`;
+  if (isNonAudioPayload(readHead(tmp))) {
+    rmSync(tmp, { force: true });
+    throw new Error('音频源返回了错误页而不是音频，请换个音质再试');
+  }
+
+  // 文件头说了算：无损流即使被标成 application/octet-stream 也会落成 .flac。
+  const format = detectAudioFormat(tmp, written.mime, written.sourceUrl);
+  const fileName = `${base}.${format.ext}`;
   const finalPath = join(root, fileName);
 
+  // 换音质重下时后缀可能变（flac → mp3），旧文件得一起删，别在目录里留孤儿。
+  const previous = findItem(input.key);
+  if (previous && previous.fileName !== fileName) {
+    rmSync(join(root, previous.fileName), { force: true });
+  }
   // 重新下载同一首时文件名一样：Windows 上 rename 到已存在的目标会失败，先删。
   rmSync(finalPath, { force: true });
   renameSync(tmp, finalPath);
@@ -212,6 +228,7 @@ export async function downloadTrack(
     platform: input.platform,
     id: input.id,
     quality: input.quality,
+    actualQuality: source.actualQuality,
     title: input.title,
     artists: input.artists,
     albumName: input.albumName,
@@ -220,7 +237,7 @@ export async function downloadTrack(
     bytes: written.bytes || finalSize(finalPath),
     createdAt: new Date().toISOString(),
     fileName,
-    mime: written.mime,
+    mime: format.mime,
   };
 
   upsertItem(item);

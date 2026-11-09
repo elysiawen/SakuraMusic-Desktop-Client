@@ -33,7 +33,8 @@ function toPlayable(item: OfflineItem): UnifiedTrack {
     album: { name: item.albumName, cover: item.albumCover },
     durationMs: item.durationMs,
     sources: [{ platform: item.platform, id: item.id }],
-    qualities: [item.quality as Quality],
+    // 平台降级时记的是实际拿到的档位，别把请求的档位显示成已下载的音质。
+    qualities: [(item.actualQuality ?? item.quality) as Quality],
   };
 }
 
@@ -123,7 +124,7 @@ async function clearAll(): Promise<void> {
       v-if="!offline.loading || count > 0"
       :tracks="tracks"
       :show-head="false"
-      empty-text="还没有下载。在任意曲目上点行尾的「…」，选「下载到本地」，下载好的文件会出现在这里。"
+      empty-text="还没有下载。在任意曲目上点行尾的「…」，选「下载到本地」或指定音质下载，文件会出现在这里。"
     />
 
     <ConfirmDialog

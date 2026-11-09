@@ -1,11 +1,17 @@
 import type { BindGroup, Texture } from 'pixi.js';
 
 // src/components/visualizer/pixi/pixiFilterPoolCompat.ts
-// Pixi 8.21.0 prunes screen-sized textures while FilterSystem still references the last pass:
-// its bind group keeps the texture bound, and a reused filter stack entry keeps it as input.
-// Remove this version-gated shim once the dependency includes both upstream fixes:
-// https://github.com/pixijs/pixijs/pull/12259 (bind group, after 8.22.0)
-// https://github.com/pixijs/pixijs/pull/12257 (stack entry, in 8.22.0)
+// Pixi prunes screen-sized filter textures while FilterSystem still references the last pass:
+// its bind group keeps the texture bound. 8.21.0 had a second bug - a reused filter stack entry
+// kept a stale input texture that push() read to find the enclosing filter's resolution; PR 12257
+// removed that lookup in 8.22.0, so the push patch below installs only where the old lookup exists.
+// The bind group fix (PR 12259, after 8.22.0) is still needed on 8.22.0.
+// https://github.com/pixijs/pixijs/pull/12259
+// https://github.com/pixijs/pixijs/pull/12257
+//
+// No VERSION gate: the shim checks every internal it is about to patch and quietly does nothing
+// when the shape changes, so a future Pixi upgrade degrades to normal rendering instead of taking
+// the whole visualizer down.
 type PixiModule = typeof import('pixi.js');
 const PATCHED = Symbol.for('folia.pixi821FilterPoolCompat');
 
@@ -16,6 +22,8 @@ interface FilterSystemCompat {
     init?: () => void;
     push: (instruction: unknown) => void;
     destroy: () => void;
+    /** 8.21.0 的旧查找：push() 会回看上一帧 stack entry 的 inputTexture，8.22.0 起已删除。 */
+    _findFilterResolution?: (...args: unknown[]) => unknown;
     [PATCHED]?: boolean;
 }
 
@@ -28,19 +36,25 @@ interface TexturePoolCompat {
 
 /** Unbind all live renderers before the shared pool destroys textures; keep normal draws unchanged. */
 export const installPixiFilterPoolCompat = (pixi: PixiModule) => {
-    if ((pixi.VERSION as string) !== '8.21.0') return;
-    const prototype = pixi.FilterSystem.prototype as unknown as FilterSystemCompat;
-    if (prototype[PATCHED]) return;
+    const prototype = pixi.FilterSystem?.prototype as unknown as FilterSystemCompat | undefined;
+    const pool = pixi.TexturePool as unknown as TexturePoolCompat | undefined;
+    const emptySource = pixi.Texture?.EMPTY?.source;
+    const bindGroup = pixi.BindGroup as unknown as { prototype?: { setResource?: unknown } } | undefined;
+    // 结构探测：下面要改的字段/方法逐项验一遍。形状变了就原路返回，让 Pixi 按自己的逻辑跑。
+    if (!prototype || prototype[PATCHED] || !pool || !emptySource?.style
+        || typeof prototype.push !== 'function' || typeof prototype.destroy !== 'function'
+        || typeof bindGroup?.prototype?.setResource !== 'function'
+        || typeof pool._dropTextures !== 'function' || typeof pool.returnTexture !== 'function'
+        || !pool._poolKey || !(pool._buckets instanceof Map)) return;
     prototype[PATCHED] = true;
 
+    const needsStackEntryFix = typeof prototype._findFilterResolution === 'function';
     const groups = new Set<BindGroup>();
-    const pool = pixi.TexturePool as unknown as TexturePoolCompat;
     const unbindPassTextures = () => {
-        const source = pixi.Texture.EMPTY.source;
         groups.forEach(group => {
-            group.setResource(source, 1);
-            group.setResource(source.style, 2);
-            group.setResource(source, 3);
+            group.setResource(emptySource, 1);
+            group.setResource(emptySource.style, 2);
+            group.setResource(emptySource, 3);
         });
     };
 
@@ -56,16 +70,18 @@ export const installPixiFilterPoolCompat = (pixi: PixiModule) => {
         this._globalFilterBindGroup.destroy();
         destroy.call(this);
     };
-    // push() claims its stack entry before looking up the enclosing filter's resolution, so for a
-    // nested filter the lookup reads that entry's input from an earlier frame - already returned,
-    // and destroyed if a resize pruned its bucket since. The value only feeds a global frame
-    // nothing reads; clearing the stale input makes the lookup fall back to the root resolution.
-    const push = prototype.push;
-    prototype.push = function (instruction) {
-        const entry = this._filterStack[this._filterStackIndex];
-        if (entry) entry.inputTexture = null;
-        push.call(this, instruction);
-    };
+    // 只有旧的 push() 需要清 stale input：它先占 stack entry，再回看 enclosing filter 的分辨率，
+    // 于是嵌套滤镜读到上一帧那个 entry 的 input（可能已被池子销毁）。清掉它让查找退回根分辨率。
+    // 8.22.0 起 _findFilterResolution / _calculateGlobalFrame 已被删掉（PR 12257），再清就是
+    // 动一个正在用的 entry，所以这里按能力装，不按版本装。
+    if (needsStackEntryFix) {
+        const push = prototype.push;
+        prototype.push = function (instruction) {
+            const entry = this._filterStack[this._filterStackIndex];
+            if (entry) entry.inputTexture = null;
+            push.call(this, instruction);
+        };
+    }
 
     // Resize, renderer destruction and clear() all discard idle textures through this method.
     const dropTextures = pool._dropTextures;

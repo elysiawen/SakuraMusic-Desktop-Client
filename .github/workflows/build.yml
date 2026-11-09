@@ -1,7 +1,8 @@
 name: Build
 
 on:
-  # 每次推送 master / main 都重新打包，并按「当天日期」发布 Release
+  # 每次推送 master / main 都重新打包，并按「当天日期」发布 Release；
+  # 同一天重复构建会删掉当天旧 Release，用本次产物整体替换
   push:
     branches: [master, main]
   workflow_dispatch:
@@ -112,13 +113,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          # 同一天多次推送：Release 已存在时直接覆盖同名产物，
-          # 避免 delete → create 之间的竞态导致「tag 已存在」报错。
+          REPO="${GITHUB_REPOSITORY}"
+          REF="repos/${REPO}/git/ref/tags/${VERSION}"
+
+          # 同一天再构建：把当天旧 Release 连同日期 tag 整个删掉，用本次产物重建。
+          # 只在旧 Release 上 upload --clobber 只覆盖同名文件：旧包会残留，
+          # 构建时间 / commit 说明也不会跟着更新。
+          if gh release view "$VERSION" --repo "$REPO" >/dev/null 2>&1; then
+            gh release delete "$VERSION" --repo "$REPO" --yes --cleanup-tag
+          elif gh api "$REF" >/dev/null 2>&1; then
+            # Release 已不在、但同名 tag 还在：也删掉，免得新 Release 挂到旧提交。
+            gh api -X DELETE "repos/${REPO}/git/refs/tags/${VERSION}"
+          fi
+
+          # tag 删除偶有 API 延迟，等它真的消失再 create，否则会复用旧 tag、
+          # 把这次的产物挂到上一次的提交上。
+          for _ in $(seq 1 10); do
+            gh api "$REF" >/dev/null 2>&1 || break
+            sleep 2
+          done
+          if gh api "$REF" >/dev/null 2>&1; then
+            echo "::error::日期 tag ${VERSION} 仍在，终止发布以免关联到旧提交"
+            exit 1
+          fi
+
           gh release create "$VERSION" artifacts/* \
-            --repo "${GITHUB_REPOSITORY}" \
+            --repo "$REPO" \
+            --target "${GITHUB_SHA}" \
             --title "Release ${VERSION}" \
-            --notes-file notes.md \
-            2>/dev/null || \
-          gh release upload "$VERSION" artifacts/* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --clobber
+            --notes-file notes.md

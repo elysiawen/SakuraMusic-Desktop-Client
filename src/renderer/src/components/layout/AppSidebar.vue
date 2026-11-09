@@ -6,6 +6,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import PlaylistDialog from '@/components/library/PlaylistDialog.vue';
 import PlaylistMoreMenu from '@/components/library/PlaylistMoreMenu.vue';
 import type { Playlist } from '@/api/types';
+import { usePopoverDragGuard } from '@/composables/usePopoverDragGuard';
 import { useToast } from '@/composables/useToast';
 import { useLibraryStore } from '@/stores/library';
 import { useOfflineStore } from '@/stores/offline';
@@ -117,6 +118,8 @@ interface PlaylistMenuState {
 }
 
 const menu = ref<PlaylistMenuState | null>(null);
+// 侧栏歌单菜单同理：菜单开着时把顶栏的拖动区降级，点它才能收起菜单。
+usePopoverDragGuard(() => menu.value !== null);
 let menuSeq = 0;
 const MENU_WIDTH = 170;
 const MENU_GAP = 6;

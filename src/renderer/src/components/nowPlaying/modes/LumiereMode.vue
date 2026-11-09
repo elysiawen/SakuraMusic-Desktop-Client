@@ -171,6 +171,8 @@ const metadata = computed<LumiereSongMetadata>(() => ({
 
 const hostRef = ref<HTMLDivElement | null>(null);
 const failed = ref(false);
+/** 启动失败原因：打包版只靠控制台很难查，兜底页上留一行可见的错误信息。 */
+const failureReason = ref('');
 /** Pixi 首个渲染帧出来之前为 true——这期间画布还没挂上，用加载动画盖住。 */
 const booting = ref(false);
 /** 首帧已渲染：画布自身淡入+轻微拉远的入场由它驱动，避免「突然亮灯」。 */
@@ -252,9 +254,11 @@ async function createRuntime(): Promise<void> {
     booting.value = false;
     live.value = true;
     failed.value = false;
+    failureReason.value = '';
   } catch (error) {
     if (controller.signal.aborted) return;
-    console.warn('[Lumiere] 绘光启动失败，退回纯文字', error);
+    failureReason.value = error instanceof Error ? error.message : String(error);
+    console.error('[Lumiere] 绘光启动失败，退回纯文字', error);
     runtime = null;
     booting.value = false;
     failed.value = true;
@@ -336,6 +340,11 @@ useHotkeys({ toggle, seekTo });
 
 onMounted(() => {
   attachAudioAnalyser();
+  // immediate watch 在 setup 阶段就跑过一次，那时模板 ref 还没挂上、createRuntime 会直接返回；
+  // 若覆盖层打开时本组件才创建，这里补一次启动，否则绘光会一直停在空舞台。
+  if (ui.lyricsOpen && track.value && !runtime && !booting.value && !failed.value) {
+    void createRuntime();
+  }
 });
 
 onBeforeUnmount(() => {
@@ -361,8 +370,11 @@ onBeforeUnmount(() => {
           <span class="boot-text">正在布光</span>
         </div>
       </Transition>
-      <!-- WebGL 不可用时的兜底：只显示当前这句 -->
-      <div v-if="failed" class="lumiere-fallback" :style="fallbackStyle">{{ fallbackText }}</div>
+      <!-- WebGL 不可用时的兜底：只显示当前这句，并留一行错误原因方便排查打包版 -->
+      <div v-if="failed" class="lumiere-fallback" :style="fallbackStyle">
+        <span>{{ fallbackText }}</span>
+        <small v-if="failureReason" class="lumiere-fallback-reason">绘光不可用：{{ failureReason }}</small>
+      </div>
 
       <!-- 页内标题栏：整页盖住窗口，这条带子同时是拖动区 -->
       <header class="lume-top drag" @dblclick="toggleMaximize">
@@ -545,6 +557,8 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
   align-items: center;
   justify-content: center;
   padding: 0 10vw;
@@ -553,6 +567,16 @@ onBeforeUnmount(() => {
   letter-spacing: 0.02em;
   text-align: center;
   text-shadow: 0 2px 24px rgba(0, 0, 0, 0.55);
+}
+
+.lumiere-fallback-reason {
+  max-width: 60ch;
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0;
+  color: rgba(232, 236, 244, 0.5);
+  text-shadow: none;
 }
 
 /* ------------------------------ 顶栏 ------------------------------ */

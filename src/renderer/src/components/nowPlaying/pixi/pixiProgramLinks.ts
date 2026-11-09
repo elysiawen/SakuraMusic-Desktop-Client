@@ -20,6 +20,8 @@ const COMPLETION_STATUS_KHR = 0x91b1;
 const LOOK_EVERY_MS = 10;
 /** How long one look may hand linked programs to the renderer: each takes a few answers from the GPU process. */
 const HAND_OVER_MS = 4;
+/** Give up on the prewarm rather than holding the canvas forever if the driver never reports completion. */
+const GIVE_UP_MS = 8000;
 /** The attributes a vertex source declares (GLSL ES 1.00 `attribute`, 3.00 `in`). */
 const DECLARED_ATTRIBUTE = /^[ \t]*(?:attribute|in)[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?\w+[ \t]+(\w+)[ \t]*;/gm;
 
@@ -27,6 +29,24 @@ const DECLARED_ATTRIBUTE = /^[ \t]*(?:attribute|in)[ \t]+(?:(?:lowp|mediump|high
 interface ShaderSystemInternals {
     _programDataHash: Record<number, GlProgramData | undefined>;
 }
+
+/**
+ * 复刻 generateProgram 用到的内部导出和缓存字段还在，才接管链接。这里不比对 VERSION：
+ * 8.21.0 / 8.22.0 的 generateProgram 与 GlShaderSystem 逐行相同，按契约探测既能覆盖两者，
+ * 也能在将来内部换形状时自动退成「Pixi 首帧自己链接」，而不是让整个绘光掉进纯文字兜底。
+ */
+const supportsProgramPrewarm = (pixi: PixiModule, renderer: Renderer): boolean => {
+    const needed: unknown[] = [
+        pixi.GlProgramData, pixi.compileShader, pixi.extractAttributesFromGlProgram,
+        pixi.getUniformData, pixi.getUboData, pixi.logProgramError, pixi.defaultValue,
+        pixi.DefaultBatcher, pixi.Shader, pixi.Mesh, pixi.Graphics,
+    ];
+    if (needed.some(value => typeof value !== 'function')) return false;
+    if (renderer.type !== pixi.RendererType?.WEBGL) return false;
+    const webgl = renderer as WebGLRenderer;
+    const shader = webgl.shader as unknown as Partial<ShaderSystemInternals> | undefined;
+    return !!shader?._programDataHash && typeof webgl.gl?.getExtension === 'function';
+};
 
 interface PendingLink {
     program: GlProgram;
@@ -53,7 +73,7 @@ const programsOf = (pixi: PixiModule, renderer: WebGLRenderer, stage: Container)
     const walk = (node: Container) => {
         for (const filter of node.filters ?? []) {
             add(filter);
-            for (const field of Object.values(filter)) {
+            for (const field of Object.values(filter ?? {})) {
                 for (const value of Array.isArray(field) ? field : [field]) {
                     if (value instanceof pixi.Shader) add(value);
                 }
@@ -69,10 +89,15 @@ const programsOf = (pixi: PixiModule, renderer: WebGLRenderer, stage: Container)
     walk(stage);
     // The batch program is one for the page, made with its first batcher: a batcher made here makes it,
     // or hands back the one there is. Left to the first draw, its link was waited for behind every draw
-    // queued before it.
-    add(new pixi.DefaultBatcher({ maxTextures: renderer.limits.maxBatchableTextures }).shader);
-    if (drawsGraphics) add((renderer.renderPipes.graphics as unknown as { _adaptor: { shader: Shader } })._adaptor.shader);
-    if (renderer.backBuffer.useBackBuffer) add((renderer.backBuffer as unknown as { _bigTriangleShader: Shader })._bigTriangleShader);
+    // queued before it. Missing internals are skipped, not thrown on: Pixi links those programs itself.
+    const maxTextures = renderer.limits?.maxBatchableTextures;
+    if (typeof maxTextures === 'number') add(new pixi.DefaultBatcher({ maxTextures }).shader);
+    if (drawsGraphics) {
+        const adaptor = (renderer.renderPipes?.graphics as unknown as { _adaptor?: { shader?: Shader } } | undefined)?._adaptor;
+        if (adaptor?.shader) add(adaptor.shader);
+    }
+    const backBuffer = renderer.backBuffer as unknown as { useBackBuffer?: boolean; _bigTriangleShader?: Shader } | undefined;
+    if (backBuffer?.useBackBuffer && backBuffer._bigTriangleShader) add(backBuffer._bigTriangleShader);
     return [...found.values()];
 };
 
@@ -129,6 +154,10 @@ const handOver = (pixi: PixiModule, gl: WebGL2RenderingContext, { program, webGL
  * yet, and resolves once each is in the renderer's cache: that render then links none of them. The
  * page runs meanwhile. Resolves at once where the GPU cannot link without being waited for, and
  * early when `signal` is aborted (the caller drops the renderer then).
+ *
+ * Whatever goes wrong in this optional prewarm is contained here: Pixi still links those programs on
+ * first draw. It must never reject, or the visualizer would fall back to plain text (see #929-era
+ * "dev works, release shows only lyrics" failures).
  */
 export const linkPixiPrograms = async (
     pixi: PixiModule,
@@ -137,23 +166,40 @@ export const linkPixiPrograms = async (
     label: string,
     signal?: AbortSignal,
 ): Promise<void> => {
-    // The shader system's cache is reached into, and generateProgram's steps are repeated: both as
-    // this version has them.
-    if ((pixi.VERSION as string) !== '8.21.0' || renderer.type !== pixi.RendererType.WEBGL) return;
+    if (!supportsProgramPrewarm(pixi, renderer)) return;
     const webgl = renderer as WebGLRenderer;
     const gl = webgl.gl;
-    if (!gl.getExtension('KHR_parallel_shader_compile')) {
-        console.info(`[PixiPrograms] ${label}: no parallel shader linking here; programs link on first draw`);
-        return;
-    }
     const linked = (webgl.shader as unknown as ShaderSystemInternals)._programDataHash;
     const started = performance.now();
-    const pending: PendingLink[] = programsOf(pixi, webgl, stage)
-        .filter(program => !linked[program._key] && !program.transformFeedbackVaryings)
-        .map((program) => {
+    let pending: PendingLink[] = [];
+    const discardPending = () => {
+        for (const item of pending) {
+            // A lost / reset context can make even deleteProgram throw; cleanup must never escape.
+            try {
+                gl.deleteShader(item.vertex);
+                gl.deleteShader(item.fragment);
+                gl.deleteProgram(item.webGLProgram);
+            } catch {
+                // Nothing left to release.
+            }
+        }
+        pending = [];
+    };
+    try {
+        if (!gl.getExtension('KHR_parallel_shader_compile')) {
+            console.info(`[PixiPrograms] ${label}: no parallel shader linking here; programs link on first draw`);
+            return;
+        }
+        for (const program of programsOf(pixi, webgl, stage)) {
+            if (linked[program._key] || program.transformFeedbackVaryings) continue;
             const vertex = pixi.compileShader(gl, gl.VERTEX_SHADER, program.vertex ?? '');
             const fragment = pixi.compileShader(gl, gl.FRAGMENT_SHADER, program.fragment ?? '');
             const webGLProgram = gl.createProgram();
+            if (!webGLProgram) {
+                gl.deleteShader(vertex);
+                gl.deleteShader(fragment);
+                continue;
+            }
             gl.attachShader(webGLProgram, vertex);
             gl.attachShader(webGLProgram, fragment);
             if (bindsAttributesInNameOrder(program)) {
@@ -161,24 +207,31 @@ export const linkPixiPrograms = async (
                 declared.forEach((name, location) => gl.bindAttribLocation(webGLProgram, location, name));
             }
             gl.linkProgram(webGLProgram);
-            return { program, webGLProgram, vertex, fragment, rebound: false };
-        });
-    const count = pending.length;
-    while (pending.length > 0) {
-        await new Promise((resolve) => { window.setTimeout(resolve, LOOK_EVERY_MS); });
-        if (signal?.aborted || gl.isContextLost()) return;
-        // They finish about in the order they were handed in: only the first unfinished one is asked about.
-        const look = performance.now();
-        while (pending.length > 0 && performance.now() - look < HAND_OVER_MS) {
-            const next = pending[0];
-            if (!gl.getProgramParameter(next.webGLProgram, COMPLETION_STATUS_KHR)) break;
-            pending.shift();
-            if (!next.rebound && bindsAttributesInNameOrder(next.program) && !attributesInNameOrder(gl, next.webGLProgram)) {
-                pending.push({ ...next, rebound: true });
-                continue;
-            }
-            linked[next.program._key] = handOver(pixi, gl, next);
+            pending.push({ program, webGLProgram, vertex, fragment, rebound: false });
         }
+        const count = pending.length;
+        while (pending.length > 0) {
+            await new Promise((resolve) => { window.setTimeout(resolve, LOOK_EVERY_MS); });
+            if (signal?.aborted || gl.isContextLost() || performance.now() - started > GIVE_UP_MS) {
+                discardPending();
+                return;
+            }
+            // They finish about in the order they were handed in: only the first unfinished one is asked about.
+            const look = performance.now();
+            while (pending.length > 0 && performance.now() - look < HAND_OVER_MS) {
+                const next = pending[0];
+                if (!gl.getProgramParameter(next.webGLProgram, COMPLETION_STATUS_KHR)) break;
+                pending.shift();
+                if (!next.rebound && bindsAttributesInNameOrder(next.program) && !attributesInNameOrder(gl, next.webGLProgram)) {
+                    pending.push({ ...next, rebound: true });
+                    continue;
+                }
+                linked[next.program._key] = handOver(pixi, gl, next);
+            }
+        }
+        if (count > 0) console.info(`[PixiPrograms] ${label}: ${count} programs linked side by side in ${Math.round(performance.now() - started)} ms`);
+    } catch (error) {
+        discardPending();
+        console.warn(`[PixiPrograms] ${label}: prewarm skipped; programs link on first draw`, error);
     }
-    if (count > 0) console.info(`[PixiPrograms] ${label}: ${count} programs linked side by side in ${Math.round(performance.now() - started)} ms`);
 };

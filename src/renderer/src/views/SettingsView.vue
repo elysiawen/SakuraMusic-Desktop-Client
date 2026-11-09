@@ -22,6 +22,7 @@ import {
 } from '@/api/types';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
+import { useOfflineStore, type DownloadQuality } from '@/stores/offline';
 import { PLAY_QUALITIES, usePlayerStore, type RouteMode } from '@/stores/player';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useUiStore } from '@/stores/ui';
@@ -29,6 +30,7 @@ import { formatBytes, platformName } from '@/utils/format';
 
 const auth = useAuthStore();
 const player = usePlayerStore();
+const offline = useOfflineStore();
 const preferences = usePreferencesStore();
 const ui = useUiStore();
 const toast = useToast();
@@ -249,6 +251,10 @@ function pickLyricColor(value: string, label: string): void {
 
 function pickQuality(quality: Quality): void {
   void player.setQuality(quality);
+}
+
+function pickDownloadQuality(quality: DownloadQuality): void {
+  offline.setDownloadQuality(quality);
 }
 
 function pickRoute(platform: Platform, mode: RouteMode): void {
@@ -716,6 +722,33 @@ function supportedCapabilities(platform: Platform): Capability[] {
             </label>
           </div>
         </template>
+
+        <div class="row stack">
+          <div class="row-copy">
+            <strong>默认下载音质</strong>
+            <small>在曲目的「…」菜单里也能为单首歌临时选音质；平台没有这一档时会自动降级</small>
+          </div>
+          <div class="options">
+            <button
+              type="button"
+              class="option"
+              :class="{ active: offline.downloadQuality === 'follow' }"
+              @click="pickDownloadQuality('follow')"
+            >
+              跟随播放
+            </button>
+            <button
+              v-for="quality in PLAY_QUALITIES"
+              :key="quality"
+              type="button"
+              class="option"
+              :class="{ active: offline.downloadQuality === quality }"
+              @click="pickDownloadQuality(quality)"
+            >
+              {{ QUALITY_LABEL[quality] }}
+            </button>
+          </div>
+        </div>
 
         <div class="row">
           <div class="row-copy">
