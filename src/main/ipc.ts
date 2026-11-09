@@ -34,6 +34,7 @@ import {
 } from './nowPlayingWindow';
 import { logTaskbarPreview, setTaskbarPreviewImage } from './windows/taskbarPreview';
 import { probeServer } from './bff/gateway';
+import { registerRendererStateIpc } from './state/rendererState';
 
 interface IpcContext {
   getMainWindow: () => BrowserWindow | null;
@@ -46,6 +47,7 @@ function windowOf(event: IpcMainInvokeEvent): BrowserWindow | null {
 }
 
 export function registerIpc(context: IpcContext): void {
+  registerRendererStateIpc();
   ipcMain.handle('config:get', (): DesktopConfig => getConfig());
 
   ipcMain.handle(

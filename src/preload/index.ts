@@ -147,6 +147,31 @@ const api: DesktopApi = {
       };
     },
   },
+
+  state: {
+    load: (): Record<string, string> => {
+      try {
+        const value: unknown = ipcRenderer.sendSync('state:load');
+        return value && typeof value === 'object'
+          ? (value as Record<string, string>)
+          : {};
+      } catch {
+        return {};
+      }
+    },
+    save: (data: Record<string, string>): void => {
+      try {
+        ipcRenderer.sendSync('state:save', data);
+      } catch {
+        // 万一某个 Electron 版本的 sandbox preload 不开放同步 IPC，
+        // 退化为单向发送；退出前那次就不保证送达了。
+        ipcRenderer.send('state:save', data);
+      }
+    },
+    saveSoon: (data: Record<string, string>): void => {
+      ipcRenderer.send('state:save', data);
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld('sakura', api);

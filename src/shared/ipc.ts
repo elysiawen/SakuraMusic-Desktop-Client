@@ -6,6 +6,21 @@
 
 import type { CacheKind, CacheStats } from './cache';
 
+/**
+ * 渲染进程 `localStorage` 的主进程镜像。
+ *
+ * 正式版每次启动 BFF 端口随机，localStorage 的 origin 也跟着变；这份同步通道
+ * 把状态落在 userData 文件里，重启后照样取回，不依赖端口。
+ */
+export interface RendererStateApi {
+  /** 取回上次保存的整份快照（同步，启动时注入用）。 */
+  load: () => Record<string, string>;
+  /** 把当前快照写进主进程文件（同步，退出前保证落盘）。 */
+  save: (data: Record<string, string>) => void;
+  /** 运行期定期同步用：单向发送，不阻塞渲染进程等主进程返回。 */
+  saveSoon: (data: Record<string, string>) => void;
+}
+
 export interface DesktopConfig {
   /** 网关根地址，形如 `http://127.0.0.1:8787`；首次启动为空。 */
   baseUrl: string;
@@ -294,4 +309,6 @@ export interface DesktopApi {
   /** 弹出式播放窗口（独立播放窗口）的窗口间通道。 */
   nowPlaying: NowPlayingApi;
   taskbarPreview: TaskbarPreviewApi;
+  /** 跨重启的状态镜像（见 RendererStateApi）。 */
+  state: RendererStateApi;
 }

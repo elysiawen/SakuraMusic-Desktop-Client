@@ -18,6 +18,7 @@ import { useToast } from '@/composables/useToast';
 import { cachedImage } from '@/utils/cacheImage';
 import { QUALITY_ORDER } from '@/utils/track';
 import { useOfflineStore } from './offline';
+import { setBeforeStateFlush } from '@/utils/stateSync';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 export type PlayMode = 'order' | 'all' | 'one' | 'shuffle';
@@ -25,6 +26,7 @@ export type RouteMode = 'auto' | 'direct' | 'proxy';
 
 interface PersistedPlayerState {
   volume?: number;
+  muted?: boolean;
   quality?: Quality;
   repeat?: RepeatMode;
   shuffle?: boolean;
@@ -178,7 +180,7 @@ export const usePlayerStore = defineStore('player', () => {
   const currentTime = ref(0);
   const duration = ref(0);
   const volume = ref(typeof persisted.volume === 'number' ? persisted.volume : 0.8);
-  const muted = ref(false);
+  const muted = ref(persisted.muted === true);
   const quality = ref<Quality>(isQuality(persisted.quality) ? persisted.quality : 'high');
   const actualQuality = ref<Quality | null>(null);
   const trial = ref(false);
@@ -263,6 +265,7 @@ export const usePlayerStore = defineStore('player', () => {
     const capped = capQueue(queue.value, index.value);
     const state: PersistedPlayerState = {
       volume: volume.value,
+      muted: muted.value,
       quality: quality.value,
       repeat: repeat.value,
       shuffle: shuffle.value,
@@ -298,6 +301,16 @@ export const usePlayerStore = defineStore('player', () => {
       persist();
     }, 2000);
   }
+
+  /** 窗口卸载前把节流挂起的写入立刻做完，交给状态镜像层同步到主进程。 */
+  function flushPersist(): void {
+    if (persistTimer !== undefined) {
+      window.clearTimeout(persistTimer);
+      persistTimer = undefined;
+    }
+    persist();
+  }
+  setBeforeStateFlush(flushPersist);
 
   function rememberProxyOnly(platform: Platform): void {
     if (proxyOnly.value.includes(platform)) return;
@@ -383,6 +396,7 @@ export const usePlayerStore = defineStore('player', () => {
     const element = new Audio();
     element.preload = 'metadata';
     element.volume = volume.value;
+    element.muted = muted.value;
 
     element.addEventListener('timeupdate', () => {
       // 电台续播按「队列还剩几首」判断，与音频进度无关，解析新地址期间也照常检查。
