@@ -65,6 +65,7 @@ export function initRendererState(): void {
   const api = window.sakura?.state;
   if (!api) return;
 
+  let initial: Snapshot | null = null;
   try {
     if (localStorage.getItem(MARKER) !== '1') {
       const snapshot: Snapshot = api.load() ?? {};
@@ -74,12 +75,14 @@ export function initRendererState(): void {
         }
       }
       localStorage.setItem(MARKER, '1');
+      initial = capture();
     }
   } catch {
     // 注入失败就当作一次全新会话，不阻塞启动。
   }
 
-  lastSnapshot = JSON.stringify(capture());
+  // 注入过的那份直接复用，省掉启动时的第二次全量遍历 + 序列化。
+  lastSnapshot = JSON.stringify(initial ?? capture());
 
   // 副窗口（桌面歌词 / 弹出播放页）与主窗口同源、共享同一份 localStorage：
   // 定期同步交给主窗口一个就够，别每个窗口都重复序列化 + 发 IPC。

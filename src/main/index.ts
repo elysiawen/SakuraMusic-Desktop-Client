@@ -141,7 +141,9 @@ if (!hasLock) {
 
   app.whenReady().then(async () => {
     app.setAppUserModelId(APP_ID);
-    cleanupTempFiles();
+    // 只删上次异常退出留下的 .part/.tmp，不参与窗口创建：放到下一个 tick，
+    // 别让封面缓存目录的 readdirSync 挡住冷启动关键路径。
+    setImmediate(cleanupTempFiles);
     installMenu();
     registerIpc({ getMainWindow: () => mainWindow, onConfigChanged: applyConfigChanged });
 
