@@ -1,44 +1,35 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { app } from 'electron';
 import type { OfflineItem, OfflineLibrary } from '@shared/offline';
 import { getConfig } from '../config/store';
+import {
+  clearOfflineItems,
+  deleteOfflineItems,
+  findOfflineItem,
+  listOfflineItems,
+  upsertOfflineItem,
+} from '../db/offline';
 
 /**
  * 下载索引。
  *
- * 索引存在 userData，音频文件存在用户选的下载目录（`<downloadDir>/Sakura Music/`）。
- * 索引只记相对文件名，换目录后旧记录会失效 —— 读取时顺手把它们清掉，
- * 免得列表里点开一首放不出来的歌。
+ * 记录存在 SQLite 的 offline_items，音频文件仍在用户选的下载目录，
+ * DB 只记相对文件名。
+ * 读路径不再对全部记录做 existsSync：只有启动时后台分批校验一次，
+ * 播放时按单条校验，列表直接读表。
  */
-
 export interface StoredOfflineItem extends OfflineItem {
   fileName: string;
   mime: string;
 }
 
-interface IndexFile {
-  v: number;
-  items: StoredOfflineItem[];
-}
-
-const FILE_VERSION = 1;
 const SUB_DIR = 'Sakura Music';
+const PRUNE_INTERVAL_MS = 5 * 60 * 1000;
+const PRUNE_BATCH = 500;
 
-let cache: StoredOfflineItem[] | null = null;
-
-function indexPath(): string {
-  return join(app.getPath('userData'), 'offline-index.json');
-}
+let lastPruneAt = 0;
+let pruning = false;
 
 /** 下载目录（自动创建）。 */
 export function downloadRoot(): string {
@@ -52,61 +43,47 @@ export function filePathOf(item: StoredOfflineItem): string {
   return join(downloadRoot(), item.fileName);
 }
 
-function readIndex(): StoredOfflineItem[] {
-  if (cache) return cache;
-
-  const file = indexPath();
-  if (!existsSync(file)) {
-    cache = [];
-    return cache;
-  }
-
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as IndexFile;
-    const items = Array.isArray(parsed.items) ? parsed.items : [];
-    cache = items.filter(
-      (item) =>
-        item &&
-        typeof item.key === 'string' &&
-        typeof item.fileName === 'string' &&
-        (item.platform === 'netease' || item.platform === 'qq'),
-    );
-  } catch {
-    cache = [];
-  }
-  return cache;
-}
-
-function persist(items: StoredOfflineItem[]): void {
-  const file = indexPath();
-  mkdirSync(app.getPath('userData'), { recursive: true });
-
-  const data: IndexFile = { v: FILE_VERSION, items };
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify(data), { encoding: 'utf8', mode: 0o600 });
-  renameSync(tmp, file);
-
-  cache = items;
-}
-
-/** 文件被用户在资源管理器里删掉时，索引也要跟着清。 */
-function pruneMissing(items: StoredOfflineItem[]): StoredOfflineItem[] {
+/**
+ * 用户可能在资源管理器里删掉文件：启动时后台分批校验一次，之后每 5 分钟
+ * 最多一次。刻意不放进请求路径，免得一次列表/播放要 stat 掉全部记录。
+ */
+export function pruneMissingFiles(): void {
+  if (pruning || Date.now() - lastPruneAt < PRUNE_INTERVAL_MS) return;
+  pruning = true;
   const root = downloadRoot();
-  const alive = items.filter((item) => existsSync(join(root, item.fileName)));
-  if (alive.length !== items.length) persist(alive);
-  return alive;
+  const items = listOfflineItems();
+  let index = 0;
+
+  const step = (): void => {
+    const end = Math.min(index + PRUNE_BATCH, items.length);
+    const missing: string[] = [];
+    for (; index < end; index++) {
+      if (!existsSync(join(root, items[index].fileName))) missing.push(items[index].key);
+    }
+    if (missing.length) deleteOfflineItems(missing);
+    if (index < items.length) {
+      setImmediate(step);
+    } else {
+      lastPruneAt = Date.now();
+      pruning = false;
+    }
+  };
+  setImmediate(step);
 }
 
 export function listItems(): StoredOfflineItem[] {
-  return pruneMissing(readIndex());
+  return listOfflineItems();
 }
 
+/** 播放路径：主键点查 + 单条文件存在性校验，与记录总数无关。 */
 export function findItem(key: string): StoredOfflineItem | null {
-  return listItems().find((item) => item.key === key) ?? null;
-}
-
-export function totalBytes(): number {
-  return listItems().reduce((sum, item) => sum + (item.bytes || 0), 0);
+  const item = findOfflineItem(key);
+  if (!item) return null;
+  if (!existsSync(join(downloadRoot(), item.fileName))) {
+    deleteOfflineItems([key]);
+    return null;
+  }
+  return item;
 }
 
 export function library(): OfflineLibrary {
@@ -118,14 +95,12 @@ export function library(): OfflineLibrary {
 }
 
 export function upsertItem(item: StoredOfflineItem): void {
-  const items = listItems().filter((entry) => entry.key !== item.key);
-  persist([item, ...items]);
+  upsertOfflineItem(item);
 }
 
 /** 删除一条记录与它的文件；返回是否删到了记录。 */
 export function removeItem(key: string): boolean {
-  const items = listItems();
-  const target = items.find((item) => item.key === key);
+  const target = findOfflineItem(key);
   if (!target) return false;
 
   try {
@@ -134,12 +109,12 @@ export function removeItem(key: string): boolean {
     // 文件可能已经被用户删掉，索引照样要清。
   }
 
-  persist(items.filter((item) => item.key !== key));
+  deleteOfflineItems([key]);
   return true;
 }
 
 export function clearItems(): void {
-  const items = listItems();
+  const items = listOfflineItems();
   const root = downloadRoot();
 
   for (const item of items) {
@@ -150,17 +125,12 @@ export function clearItems(): void {
     }
   }
 
-  persist([]);
+  clearOfflineItems();
   try {
     rmSync(root, { recursive: true, force: true });
   } catch {
     // 目录被占用时留空目录即可。
   }
-}
-
-/** 下载写临时文件时用，避免半成品被索引引用。 */
-export function tempPathFor(fileName: string): string {
-  return join(downloadRoot(), `${fileName}.part`);
 }
 
 export function finalSize(filePath: string): number {

@@ -7,7 +7,9 @@ import appIcon from '../../build/icon.png?asset';
 import { startBff, type BffHandle } from './bff/server';
 import { cleanupTempFiles } from './cache/index';
 import { getConfig, saveConfig } from './config/store';
+import { closeDatabase, initDatabase } from './db';
 import { closeDesktopLyric, syncDesktopLyric } from './lyric';
+import { pruneMissingFiles } from './offline/store';
 import { installMenu } from './menu';
 import { registerIpc } from './ipc';
 import { closeNowPlayingWindow, initNowPlayingWindow } from './nowPlayingWindow';
@@ -149,9 +151,22 @@ if (!hasLock) {
     // dev 时协议层把静态请求转发给 Vite，生产时直接读 out/renderer；
     // 页面本身两边都从 sakura://app 加载，不再有 origin / CSP 差异。
     const devServerUrl = process.env.ELECTRON_RENDERER_URL?.replace(/\/+$/, '') ?? null;
+    // 本地数据库：离线索引与 lyric/meta 响应缓存都在这里。必须赶在 BFF 起来
+    // 之前初始化，否则首个 /api 或 /offline 请求会拿到未初始化的连接。
+    try {
+      initDatabase(app.getPath('userData'));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      dialog.showErrorBox('Sakura Music 启动失败', `本地数据库无法初始化：${message}`);
+      app.quit();
+      return;
+    }
+
     // 只删上次异常退出留下的 .part/.tmp，不参与窗口创建：放到下一个 tick，
     // 别让封面缓存目录的 readdirSync 挡住冷启动关键路径。
     setImmediate(cleanupTempFiles);
+    // 用户可能手动删过下载文件：后台分批校验一次，不挡首屏。
+    setImmediate(pruneMissingFiles);
     installMenu();
     registerIpc({ getMainWindow: () => mainWindow, onConfigChanged: applyConfigChanged });
 
@@ -195,8 +210,13 @@ if (!hasLock) {
   app.on('before-quit', () => {
     if (quitting) return;
     quitting = true;
-    void bff?.close();
+    // 先停本地服务再收数据库，避免退出途中的请求打到已关闭的连接。
+    if (bff) void bff.close().finally(closeDatabase);
+    else closeDatabase();
   });
+
+  // 兜底：任何退出路径都要释放 SQLite 句柄并 checkpoint WAL。
+  app.on('will-quit', closeDatabase);
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();

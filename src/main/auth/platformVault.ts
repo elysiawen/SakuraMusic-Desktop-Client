@@ -1,12 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { app, safeStorage } from 'electron';
+import { safeStorage } from 'electron';
+import { deleteKv, getKv, setKv } from '../db/kv';
 
 /**
  * 平台凭据保险库（「仅本机」模式）。
  *
- * 扫码后在弹窗里选「仅本机」时，凭据不回服务器，而是加密存在本机，并由主进程在每次
- * 网关请求里注入 `X-Sakura-Credential`（base64url(JSON)）。渲染进程从头到尾看不到凭据。
+ * 扫码后在弹窗里选「仅本机」时，凭据不回服务器，而是加密存在本地 SQLite 的
+ * kv 表，并由主进程在每次网关请求里注入 `X-Sakura-Credential`（base64url(JSON)）。
+ * 渲染进程从头到尾看不到凭据。
  *
  * 与 `cookieVault` 是两件事：那里是 Sakura 账号的会话令牌，这里是第三方平台的登录态。
  */
@@ -21,13 +21,10 @@ interface StoredVault {
   data: string;
 }
 
-const FILE_VERSION = 1;
+const STORED_VERSION = 1;
+const VAULT_KEY = 'platform_credentials';
 
 let cache: VaultMap | null = null;
-
-function vaultFile(): string {
-  return join(app.getPath('userData'), 'platform-credentials.bin');
-}
 
 function decode(stored: StoredVault): VaultMap | null {
   try {
@@ -56,14 +53,14 @@ function decode(stored: StoredVault): VaultMap | null {
 function readVault(): VaultMap {
   if (cache) return cache;
 
-  const file = vaultFile();
-  if (!existsSync(file)) {
+  const raw = getKv(VAULT_KEY);
+  if (!raw) {
     cache = {};
     return cache;
   }
 
   try {
-    const stored = JSON.parse(readFileSync(file, 'utf8')) as StoredVault;
+    const stored = JSON.parse(raw) as StoredVault;
     cache = decode(stored) ?? {};
   } catch {
     cache = {};
@@ -72,9 +69,6 @@ function readVault(): VaultMap {
 }
 
 function persist(map: VaultMap): void {
-  const file = vaultFile();
-  mkdirSync(dirname(file), { recursive: true });
-
   const text = JSON.stringify(map);
   let encrypted = safeStorage.isEncryptionAvailable();
   let data = '';
@@ -83,17 +77,14 @@ function persist(map: VaultMap): void {
     try {
       data = safeStorage.encryptString(text).toString('base64');
     } catch {
-      // 与 cookieVault 一致：声明可用但实际缺 keyring 时退化为 0600 明文。
+      // 与 cookieVault 一致：声明可用但实际缺 keyring 时退化为明文记录。
       encrypted = false;
     }
   }
   if (!encrypted) data = Buffer.from(text, 'utf8').toString('base64');
 
-  const stored: StoredVault = { v: FILE_VERSION, encrypted, data };
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify(stored), { encoding: 'utf8', mode: 0o600 });
-  renameSync(tmp, file);
-
+  const stored: StoredVault = { v: STORED_VERSION, encrypted, data };
+  setKv(VAULT_KEY, JSON.stringify(stored));
   cache = map;
 }
 
@@ -118,9 +109,9 @@ export function clearPlatformCredential(platform: PlatformKey): void {
 export function clearAllPlatformCredentials(): void {
   cache = {};
   try {
-    rmSync(vaultFile(), { force: true });
+    deleteKv(VAULT_KEY);
   } catch {
-    // 删不掉文件也不影响内存里的清理。
+    // 删不掉记录也不影响内存里的清理。
   }
 }
 

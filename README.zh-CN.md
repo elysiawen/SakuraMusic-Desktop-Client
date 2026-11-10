@@ -12,8 +12,8 @@ Sakura Music 的桌面客户端 —— Windows / macOS / Linux。
 
 **基础设施**
 - Electron 三进程架构：主进程 + preload + 渲染进程
-- 本地 BFF（只绑定 `127.0.0.1`）：`/api` 反向代理、SSE 透传、静态资源托管
-- 会话 Cookie 由主进程通过 `safeStorage` 加密落盘，渲染进程永远拿不到凭据
+- 本地 BFF（只绑定 `127.0.0.1`）：`/api` 反向代理、SSE 透传、支持 HTTP Range 的媒体流；页面本身在 dev / release 下都由 `sakura://app` 自定义协议提供
+- 会话 Cookie 与「仅本机」平台凭据由 `safeStorage` 加密后存入本地 SQLite 数据库，渲染进程永远拿不到凭据
 - 首次启动的服务器配置、自签名证书检测与 SHA-256 指纹展示
 - 登录 / 注册 / 退出、会话持久化、401 自动跳转登录页
 - 无边框自定义标题栏（拖动区与窗口按钮）；登录页和服务器配置页复用同一条标题栏
@@ -64,12 +64,28 @@ Sakura Music 的桌面客户端 —— Windows / macOS / Linux。
 - 验证需要真实的 Windows 会话：只有缩略图真正可见时 DWM 才会发送 `WM_DWMSENDICONICTHUMBNAIL`。
 - macOS / Linux 保留系统标题栏，没有缩略图工具栏；该功能完全跳过。
 
+## 本地数据存储
+
+主进程的本地状态集中在一个 SQLite 数据库 `sakura.db` 里，位于 Electron 的 `userData` 目录。使用 Electron 内置的 `node:sqlite`（WAL 模式），不需要 native 模块、rebuild 或 `asarUnpack`；POSIX 下库文件权限为 `0600`。渲染进程的界面偏好仍使用 `localStorage`。
+
+| 表 | 内容 |
+| --- | --- |
+| `kv` | 桌面配置（服务器地址、缓存额度、设备标识、窗口尺寸 / 位置 / 最大化状态）、会话令牌、以及「仅本机」平台凭据；凭据值仍由 `safeStorage` 加密。 |
+| `offline_items` | 下载索引：平台 / 曲目 ID、音质、大小与相对文件名。 |
+| `response_cache` | 带 TTL 的歌词与详情 JSON 响应，供断网回退。 |
+| `media_cache` | 仅音频 / 封面元数据：完整长度、MIME、字节数、最近访问时间。 |
+
+**媒体文件一律不入库。** 音频前缀、封面图与已下载曲目仍以文件形式留在磁盘（`sakura-cache/audio/*.audio`、`sakura-cache/cover/*.img` 与用户选择的下载目录），仍由本地 BFF 通过 HTTP Range 流式返回。缓存用量统计与 LRU 淘汰改走 SQL，不再扫描目录；下载依旧先写 `.part` 文件，成功后才改名。
+
+项目尚未发布，代码中没有旧版 JSON 的导入或清理逻辑。要重置到干净状态，删除 `sakura.db`（或整个 `userData` 目录）即可。
+
 ## 技术栈
 
 - **外壳**：Electron 38（主进程 + preload + 渲染进程）、electron-vite、electron-builder
 - **界面**：Vue 3.5（`<script setup>`）、Pinia、Vue Router、TypeScript
 - **图形**：手写 WebGL2 着色器（沉浸 / 雾笺）、PixiJS v8（绘光）、three.js（町景）
 - **原生**：koffi FFI 调用 Windows DWM / 任务栏缩略图；`safeStorage` 加密会话
+- **存储**：Electron 内置 `node:sqlite`（WAL 模式）；媒体文件仍留在磁盘
 - **质量**：`vue-tsc` + `tsc` 类型检查、`scripts/` 下的 CDP 冒烟脚本
 
 ## 开发
@@ -81,9 +97,9 @@ npm run dev
 
 开发模式下：
 
-- 渲染进程：Vite 于 `http://localhost:5173`
-- 主进程 BFF：`http://127.0.0.1:3210`
-- Vite 将 `/api` 代理到 BFF；渲染进程只使用相对路径
+- dev / release 的页面都从 `sakura://app` 加载：同一 origin、同一份 CSP、`localStorage` 稳定
+- dev 时主进程协议层把静态请求转发给 Vite（`http://localhost:5173`，HMR 照常工作），把 API / 媒体 / SSE 请求转发给进程内 BFF（`http://127.0.0.1:3210`）
+- 渲染进程不直接访问 Vite 或 BFF，这两个端口对页面不可见
 
 ## 构建
 
@@ -106,11 +122,11 @@ python scripts/make-icon.py     # 需要 Pillow 与 NumPy
 ## 安全设计
 
 - 渲染进程：`contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`
-- BFF 只绑定回环地址；生产环境下首次页面加载需要一次性的 `?k=<secret>` 查询参数，服务器据此签发 HttpOnly 的本地访问 Cookie —— 阻止其他本地进程直接调用 `/api`
-- 会话 Cookie 加密后保存在主进程；`Set-Cookie` 响应头永远不会转发给渲染进程
-- 生产静态响应带 CSP：脚本限制为同源，音频限制为同源 + blob
+- BFF 只绑定回环地址，并拒绝所有不带令牌的请求：令牌每次启动随机生成，由主进程的 `sakura://app` 协议层注入内部 `x-sakura-bff` 请求头，页面拿不到 —— 即使其他本地进程扫到了端口也无法调用 `/api`
+- 会话 Cookie 由 `safeStorage` 加密后存入主进程的 SQLite 数据库；`Set-Cookie` 响应头永远不会转发给渲染进程
+- CSP 以 meta 标签写在 `index.html` 里（dev / release 同一份文件）：脚本限制为同源，音频限制为同源 + blob
 - 自签名证书按服务器显式启用；从不全局关闭 TLS 校验
-- 第三方平台凭据从不保存在本地 —— 只使用服务端存储的凭据（产品决策）
+- 「仅本机」第三方平台凭据同样加密存库，由主进程按请求注入；渲染进程拿不到原始 cookie
 
 ## 冒烟测试
 
@@ -130,14 +146,14 @@ node scripts/cdp-smoke.mjs smoke.png
 node scripts/cdp-flow.mjs
 ```
 
-`cdp-flow.mjs` 假设应用从服务器配置页启动。要重置到干净状态，删除 `%APPDATA%\Sakura Music\config.json` 与 `session.bin`（macOS / Linux 上是对应的 `app.getPath('userData')` 目录）。
+`cdp-flow.mjs` 假设应用从服务器配置页启动。要重置到干净状态，删除应用 `userData` 目录下的 `sakura.db`（Windows 上是 `%APPDATA%\Sakura Music\`，macOS / Linux 上是对应的 `app.getPath('userData')` 目录）。`sakura-cache/` 中的媒体缓存与已下载曲目不在数据库里，需要的话另行删除。
 
 ## 已知限制
 
 - 任务栏缩略图预览仅支持 Windows（Win10 / Win11），且依赖 DWM
 - 没有自动更新 —— 用户需手动安装新版本
 - 未做代码签名：Windows SmartScreen 会提示警告，macOS 需要右键 → 打开
-- 有意不支持「仅本地」凭据模式（产品决策）
+- 「仅本机」平台凭据只保存在这台设备上，不会在多设备间同步
 - 网关协议规范维护在网关仓库中；本仓库只包含客户端实现
 - M6 的打磨与发布工作仍在进行中
 
@@ -146,6 +162,7 @@ node scripts/cdp-flow.mjs
 ```
 src/
   main/        主进程：BFF、配置、会话、IPC、离线下载与桌面歌词 / 播放窗口
+    db/        本地 SQLite：kv（配置 / 凭据）、离线索引、响应与媒体缓存元数据
     windows/   窗口创建、圆角、Windows 任务栏缩略图预览
   preload/     通过 contextBridge 暴露的最小桌面能力
   renderer/    Vue 3 桌面界面

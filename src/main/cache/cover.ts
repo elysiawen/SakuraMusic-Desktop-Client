@@ -3,18 +3,16 @@ import {
   createReadStream,
   createWriteStream,
   existsSync,
-  readFileSync,
   renameSync,
   statSync,
   unlinkSync,
-  utimes,
-  writeFileSync,
 } from 'node:fs';
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
 import https from 'node:https';
 import { join } from 'node:path';
 import { URL } from 'node:url';
 import { errorPayload, sendJson } from '../bff/respond';
+import { getMedia, putMedia, touchMedia } from '../db/media';
 import { coverCacheDir, coverLimitBytes, trimCache } from './index';
 
 /**
@@ -45,39 +43,28 @@ function imageFile(url: string): string {
   return join(coverCacheDir(), `${hash(url)}.img`);
 }
 
-function imageMetaFile(url: string): string {
-  return join(coverCacheDir(), `${hash(url)}.json`);
-}
-
 function readMeta(url: string): ImageMeta {
+  return { contentType: getMedia('cover', hash(url))?.mime || 'image/jpeg' };
+}
+
+function writeMeta(url: string, meta: ImageMeta, bytes: number): void {
   try {
-    const parsed = JSON.parse(readFileSync(imageMetaFile(url), 'utf8')) as ImageMeta;
-    return { contentType: typeof parsed.contentType === 'string' ? parsed.contentType : 'image/jpeg' };
-  } catch {
-    return { contentType: 'image/jpeg' };
+    putMedia('cover', hash(url), {
+      total: null,
+      mime: meta.contentType,
+      bytes,
+    });
+  } catch (error) {
+    console.error('[cache] 写入封面元数据失败：', error);
   }
 }
 
-function writeMeta(url: string, meta: ImageMeta): void {
-  const file = imageMetaFile(url);
-  const tmp = `${file}.tmp`;
+function touchCover(url: string): void {
   try {
-    writeFileSync(tmp, JSON.stringify(meta), 'utf8');
-    renameSync(tmp, file);
+    touchMedia('cover', hash(url));
   } catch {
-    try {
-      unlinkSync(tmp);
-    } catch {
-      // ignore
-    }
+    // 访问时间只用于 LRU，失败不影响出图。
   }
-}
-
-function touch(file: string): void {
-  const now = new Date();
-  utimes(file, now, now, () => {
-    // ignore
-  });
 }
 
 function serveImage(
@@ -85,6 +72,7 @@ function serveImage(
   res: ServerResponse,
   file: string,
   contentType: string,
+  cacheUrl: string,
 ): void {
   let size: number;
   try {
@@ -98,7 +86,7 @@ function serveImage(
     return;
   }
 
-  touch(file);
+  touchCover(cacheUrl);
   res.writeHead(200, {
     'Content-Type': contentType,
     'Content-Length': size,
@@ -236,7 +224,13 @@ function forwardImage(
     const file = imageFile(cacheUrl);
     try {
       renameSync(cacheTarget, file);
-      writeMeta(cacheUrl, { contentType });
+      let bytes = 0;
+      try {
+        bytes = statSync(file).size;
+      } catch {
+        // 文件刚被清理就按 0 记，不影响出图。
+      }
+      writeMeta(cacheUrl, { contentType }, bytes);
       trimCache('cover');
     } catch {
       try {
@@ -302,7 +296,7 @@ export async function handleCover(
   const file = imageFile(cacheUrl);
   const cached = existsSync(file) && statSync(file).size > 0;
   if (cached) {
-    serveImage(req, res, file, readMeta(cacheUrl).contentType);
+    serveImage(req, res, file, readMeta(cacheUrl).contentType, cacheUrl);
     return;
   }
 

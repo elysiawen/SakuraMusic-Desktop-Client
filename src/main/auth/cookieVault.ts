@@ -1,19 +1,19 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { app, safeStorage } from 'electron';
+import { safeStorage } from 'electron';
+import { deleteKv, getKv, setKv } from '../db/kv';
 
 /**
  * 会话 Cookie 保险库。
  *
  * 网关的登录态是 HttpOnly Cookie `sakura_session`。桌面端不把它交给渲染进程：
- * 主进程截获 `Set-Cookie` 后加密写入 `userData/session.bin`，后续所有网关请求由 BFF 注入。
+ * 主进程截获 `Set-Cookie` 后加密写入本地 SQLite 的 kv 表，后续所有网关请求由 BFF 注入。
  *
- * safeStorage 在 Linux 上可能因为缺少 libsecret 而不可用，此时退化为 0600 权限的明文文件。
- * 这只是会话令牌，不是第三方平台凭据；即便如此也会在日志里明确提示一次。
+ * safeStorage 在 Linux 上可能因为缺少 libsecret 而不可用，此时退化为明文记录；
+ * 库文件在 POSIX 上是 0600 权限，这种情况会在日志里明确提示一次。
  */
 
 const SESSION_COOKIE = 'sakura_session';
-const FILE_VERSION = 1;
+const SESSION_KEY = 'session';
+const STORED_VERSION = 1;
 
 interface StoredSession {
   v: number;
@@ -25,15 +25,11 @@ let memoryCookie: string | null = null;
 let loaded = false;
 let warnedPlaintext = false;
 
-function sessionFile(): string {
-  return join(app.getPath('userData'), 'session.bin');
-}
-
 function readStored(): StoredSession | null {
-  const file = sessionFile();
-  if (!existsSync(file)) return null;
+  const raw = getKv(SESSION_KEY);
+  if (!raw) return null;
   try {
-    return JSON.parse(readFileSync(file, 'utf8')) as StoredSession;
+    return JSON.parse(raw) as StoredSession;
   } catch {
     return null;
   }
@@ -53,16 +49,13 @@ function decodeStored(stored: StoredSession): string | null {
 }
 
 function persist(value: string): void {
-  const file = sessionFile();
-  mkdirSync(dirname(file), { recursive: true });
-
   let encrypted = safeStorage.isEncryptionAvailable();
   let data = '';
   if (encrypted) {
     try {
       data = safeStorage.encryptString(value).toString('base64');
     } catch {
-      // 某些 Linux 桌面声明可用、实际缺 keyring；退化为 0600 文件而不是让登录失败。
+      // 某些 Linux 桌面声明可用、实际缺 keyring；退化为明文记录而不是让登录失败。
       encrypted = false;
     }
   }
@@ -71,21 +64,18 @@ function persist(value: string): void {
     if (!warnedPlaintext) {
       warnedPlaintext = true;
       console.warn(
-        '[sakura] 系统安全存储不可用，会话令牌将以 0600 权限的文件保存。' +
+        '[sakura] 系统安全存储不可用，会话令牌将以明文记录保存在本地数据库（库文件 0600）。' +
           'Linux 上安装 libsecret / gnome-keyring 可恢复加密。',
       );
     }
   }
 
   const stored: StoredSession = {
-    v: FILE_VERSION,
+    v: STORED_VERSION,
     encrypted,
     data,
   };
-
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify(stored), { encoding: 'utf8', mode: 0o600 });
-  renameSync(tmp, file);
+  setKv(SESSION_KEY, JSON.stringify(stored));
 }
 
 /** 读取会话令牌；没有登录态时返回 null。 */
@@ -158,7 +148,7 @@ export function clearSessionCookie(): void {
   memoryCookie = null;
   loaded = true;
   try {
-    rmSync(sessionFile(), { force: true });
+    deleteKv(SESSION_KEY);
   } catch {
     // 删除失败不影响内存中的登录态清理。
   }

@@ -5,8 +5,9 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 /**
  * 主进程/预加载走 Vite 打包，渲染进程单独一套。
  *
- * 开发时渲染进程由 Vite 提供（:5173），`/api` 代理到主进程里的本地 BFF（:3210）。
- * 生产时主进程 BFF 同时托管 `out/renderer` 与 `/api`，渲染进程只访问同源地址。
+ * dev / release 的页面都从 `sakura://app` 加载：dev 时协议层把静态请求转发给
+ * Vite dev server，release 时直接读 out/renderer。API / 媒体 / SSE 一律由协议层
+ * 转发给进程内 BFF，所以 Vite 不需要配置代理。
  */
 export default defineConfig({
   main: {

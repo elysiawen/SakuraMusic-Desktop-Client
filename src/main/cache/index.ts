@@ -1,15 +1,6 @@
 import { createHash } from 'node:crypto';
 import { app } from 'electron';
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   CACHE_KINDS,
@@ -18,19 +9,20 @@ import {
   type CacheUsage,
 } from '@shared/cache';
 import { getConfig } from '../config/store';
+import { clearResponses, readResponse, responseUsage, writeResponse } from '../db/cache';
+import { clearMedia, deleteMedia, mediaUsage, oldestMedia } from '../db/media';
 
 /**
- * 桌面端磁盘缓存。
+ * 桌面端缓存。
  *
- * 目录放在 userData 下的 `sakura-cache`，与 Chromium 自己的 `Cache` 目录分开，
- * 避免清理缓存时误删页面资源。分类与安卓端一致：
- *   - audio：边播边存的音频前缀
- *   - cover：封面/头像图片
- *   - lyric / meta：JSON 响应，带 TTL，可断网回退旧数据
+ * DB 只放结构化数据：
+ *   - lyric / meta：上游 JSON 响应文本
+ *   - audio / cover：total / mime / bytes / accessed_at 等元数据
+ * 媒体文件仍在 userData 下的 `sakura-cache`，按 <hash>.audio / <hash>.img 存；
+ * 统计、LRU、清理都查表，不再 readdir + stat 整个目录。
  */
 
-export const MB = 1024 * 1024;
-const CACHE_SCHEMA = 1;
+const MB = 1024 * 1024;
 const ROOT_DIR = 'sakura-cache';
 
 export type JsonCacheKind = 'lyric' | 'meta';
@@ -73,19 +65,9 @@ export function responseTtlMs(kind: JsonCacheKind): number {
 /* JSON 响应缓存                                                       */
 /* ------------------------------------------------------------------ */
 
-interface CacheEntry {
-  v?: number;
-  savedAt?: number;
-  payload?: string;
-}
-
 function cacheName(key: string): string {
-  // 固定长度的文件名，避免签名图片 URL 或长曲目键触发 Windows 路径长度限制。
+  // 固定长度主键，避免签名图片 URL 或长曲目键触发 Windows 路径长度限制。
   return createHash('sha1').update(key, 'utf8').digest('hex');
-}
-
-function responseFile(kind: JsonCacheKind, key: string): string {
-  return join(cacheDir(kind), `${cacheName(key)}.json`);
 }
 
 function removeFile(file: string): void {
@@ -96,54 +78,25 @@ function removeFile(file: string): void {
   }
 }
 
-function readEntry(file: string): CacheEntry | null {
-  if (!existsSync(file)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as CacheEntry;
-    if (typeof parsed.savedAt !== 'number' || typeof parsed.payload !== 'string') {
-      removeFile(file);
-      return null;
-    }
-    if (parsed.v !== CACHE_SCHEMA) {
-      removeFile(file);
-      return null;
-    }
-    // 模型/字段变化时缓存可能不再是合法 JSON，直接丢掉。
-    JSON.parse(parsed.payload);
-    return parsed;
-  } catch {
-    removeFile(file);
-    return null;
-  }
-}
-
-/** 读取仍新鲜的响应；过期返回 null，但保留文件供断网回退。 */
+/** 读取仍新鲜的响应；过期返回 null，但保留记录供断网回退。 */
 export function readResponseCache(kind: JsonCacheKind, key: string): string | null {
-  const entry = readEntry(responseFile(kind, key));
-  if (!entry || entry.savedAt === undefined) return null;
+  const entry = readResponse(kind, cacheName(key));
+  if (!entry) return null;
   if (Date.now() - entry.savedAt > responseTtlMs(kind)) return null;
-  return entry.payload ?? null;
+  return entry.payload;
 }
 
 /** 忽略 TTL 读取旧响应，只在网关不可达时使用。 */
 export function readStaleResponseCache(kind: JsonCacheKind, key: string): string | null {
-  const entry = readEntry(responseFile(kind, key));
-  return entry?.payload ?? null;
+  return readResponse(kind, cacheName(key))?.payload ?? null;
 }
 
 export function writeResponseCache(kind: JsonCacheKind, key: string, payload: string): void {
-  const file = responseFile(kind, key);
-  const tmp = `${file}.tmp`;
   try {
-    mkdirSync(cacheDir(kind), { recursive: true });
-    writeFileSync(
-      tmp,
-      JSON.stringify({ v: CACHE_SCHEMA, savedAt: Date.now(), payload }),
-      'utf8',
-    );
-    renameSync(tmp, file);
-  } catch {
-    removeFile(tmp);
+    writeResponse(kind, cacheName(key), payload);
+  } catch (error) {
+    // 缓存写失败不影响本次请求，但要留痕，避免静默降级难排查。
+    console.error('[cache] 写入响应缓存失败：', error);
   }
 }
 
@@ -171,61 +124,22 @@ export function responseCacheKey(pathname: string, search: string): string {
 /* 统计 / 清理 / LRU                                                   */
 /* ------------------------------------------------------------------ */
 
-interface DiskFile {
-  path: string;
-  size: number;
-  mtimeMs: number;
-}
-
-function listFiles(
-  dir: string,
-  match: (name: string) => boolean,
-): DiskFile[] {
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return [];
-  }
-
-  const files: DiskFile[] = [];
-  for (const name of names) {
-    if (!match(name)) continue;
-    const path = join(dir, name);
-    try {
-      const stat = statSync(path);
-      if (stat.isFile()) files.push({ path, size: stat.size, mtimeMs: stat.mtimeMs });
-    } catch {
-      // 文件可能刚被另一个请求删掉。
-    }
-  }
-  return files;
-}
-
-function usageOf(kind: CacheKind): CacheUsage {
-  const dir = join(cacheRoot(), kind);
-  const files =
-    kind === 'audio'
-      ? listFiles(dir, (name) => name.endsWith('.audio'))
-      : kind === 'cover'
-        ? listFiles(dir, (name) => name.endsWith('.img'))
-        : listFiles(dir, (name) => name.endsWith('.json'));
-
-  return {
-    kind,
-    bytes: files.reduce((sum, file) => sum + file.size, 0),
-    entries: files.length,
-  };
-}
-
 export function getCacheStats(): CacheStats {
-  const kinds = CACHE_KINDS.map(usageOf);
+  const response = responseUsage();
+  const media = mediaUsage();
+  const kinds: CacheUsage[] = CACHE_KINDS.map((kind) => {
+    if (kind === 'lyric' || kind === 'meta') {
+      return { kind, bytes: response[kind].bytes, entries: response[kind].entries };
+    }
+    return { kind, bytes: media[kind].bytes, entries: media[kind].entries };
+  });
   return {
     kinds,
     totalBytes: kinds.reduce((sum, usage) => sum + usage.bytes, 0),
   };
 }
 
+/** 删掉目录里的媒体文件与写入中途留下的 .part。 */
 function clearDir(dir: string): void {
   let names: string[];
   try {
@@ -234,7 +148,7 @@ function clearDir(dir: string): void {
     return;
   }
   for (const name of names) {
-    if (name.endsWith('.json') || name.endsWith('.audio') || name.endsWith('.img') || name.endsWith('.part')) {
+    if (name.endsWith('.audio') || name.endsWith('.img') || name.endsWith('.part')) {
       removeFile(join(dir, name));
     }
   }
@@ -243,36 +157,36 @@ function clearDir(dir: string): void {
 /** 清理一类或全部缓存；下载目录不在其中。 */
 export function clearCache(kind?: CacheKind): void {
   const targets: CacheKind[] = kind ? [kind] : [...CACHE_KINDS];
-  for (const target of targets) clearDir(join(cacheRoot(), target));
-}
-
-function removeSidecar(file: string): void {
-  removeFile(file.replace(/\.[^.]+$/, '.json'));
+  for (const target of targets) {
+    if (target === 'lyric' || target === 'meta') clearResponses(target);
+    else clearMedia(target);
+    clearDir(join(cacheRoot(), target));
+  }
 }
 
 /**
- * 把音频/封面缓存压回用户设置的上限，淘汰最久未访问的文件。
+ * 把音频/封面缓存压回用户设置的上限，按 DB 里的 accessed_at 淘汰最久未用的。
  * 额度为 0 时会清空该类；正在播放、被系统占用的文件删不掉就留到下次。
  */
 export function trimCache(kind: 'audio' | 'cover'): void {
   const limit = kind === 'audio' ? audioLimitBytes() : coverLimitBytes();
   if (!Number.isFinite(limit)) return;
 
-  const dir = join(cacheRoot(), kind);
-  const files = listFiles(dir, (name) => name.endsWith(kind === 'audio' ? '.audio' : '.img'));
-  let total = files.reduce((sum, file) => sum + file.size, 0);
+  let total = mediaUsage()[kind].bytes;
   if (total <= limit) return;
 
-  files.sort((a, b) => a.mtimeMs - b.mtimeMs);
-  for (const file of files) {
+  const dir = join(cacheRoot(), kind);
+  const ext = kind === 'audio' ? '.audio' : '.img';
+  for (const victim of oldestMedia(kind)) {
     if (total <= limit) break;
-    removeFile(file.path);
-    removeSidecar(file.path);
-    total -= file.size;
+    const base = join(dir, victim.cacheKey);
+    removeFile(`${base}${ext}`);
+    deleteMedia(kind, victim.cacheKey);
+    total -= victim.bytes;
   }
 }
 
-/** 启动时把上次异常退出留下的临时文件清掉。 */
+/** 启动时把上次异常退出留下的临时文件清掉；只有音频/封面会写临时文件。 */
 export function cleanupTempFiles(): void {
   for (const kind of ['audio', 'cover'] as const) {
     const dir = join(cacheRoot(), kind);

@@ -123,8 +123,6 @@ export interface DesktopConfigPatch {
   lyricFontSize?: number;
   lyricColor?: string;
   lyricShowTrans?: boolean;
-  lyricX?: number | null;
-  lyricY?: number | null;
   taskbarPreview?: boolean;
 }
 

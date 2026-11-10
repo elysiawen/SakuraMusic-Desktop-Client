@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } f
 import { CACHE_KINDS, type CacheKind, type CacheStats } from '@shared/cache';
 import type {
   AppInfo,
+  AudioCacheState,
   DesktopConfig,
   DesktopConfigPatch,
   DesktopLyricState,
@@ -139,7 +140,7 @@ export function registerIpc(context: IpcContext): void {
   /** 渲染进程查询某首音频的本地缓存状态（磁盘实查，无副作用）。 */
   ipcMain.handle(
     'cache:audio-check',
-    (_event, key: string): 'full' | 'partial' | null => queryAudioCacheState(key),
+    (_event, key: string): AudioCacheState => queryAudioCacheState(key),
   );
 
   // ---- 弹出式播放窗口（独立播放窗口）：窗口间中转站 ----

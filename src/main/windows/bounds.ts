@@ -66,7 +66,7 @@ interface TrackOptions {
   trackMaximized?: boolean;
 }
 
-/** 挂 resize/move/close，把用户调过的尺寸防抖写进 config.json。 */
+/** 挂 resize/move/close，把用户调过的尺寸防抖写进本地数据库。 */
 export function trackWindowBounds(
   window: BrowserWindow,
   key: BoundsKey,

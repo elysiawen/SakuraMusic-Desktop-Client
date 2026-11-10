@@ -1,21 +1,20 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { app } from 'electron';
 import type { DesktopConfig, WindowBounds } from '@shared/ipc';
+import { getKv, setKv } from '../db/kv';
 import { normalizeBaseUrl } from './url';
 
 /**
  * 桌面端配置：服务器地址、TLS 开关、设备标识、缓存/下载位置。
- * 存 JSON，写入用「临时文件 + 改名」避免半截文件把配置写坏。
+ * 存在 SQLite 的 kv 表（一行 JSON），读写前后同样逐字段清洗。
+ * 必须在 initDatabase() 之后调用。
  */
 
-let cached: DesktopConfig | null = null;
+const CONFIG_KEY = 'config';
 
-function configPath(): string {
-  return join(app.getPath('userData'), 'config.json');
-}
+let cached: DesktopConfig | null = null;
 
 export function defaultDownloadDir(): string {
   return join(app.getPath('userData'), 'downloads');
@@ -129,34 +128,29 @@ function sanitize(input: Partial<DesktopConfig> | null | undefined): DesktopConf
     mainWindowBounds: bounds(raw.mainWindowBounds),
     mainWindowMaximized: raw.mainWindowMaximized === true,
     nowPlayingBounds: bounds(raw.nowPlayingBounds),
-    // 缺省为开：老配置文件里没这个字段时也要默认启用。
+    // 缺省为开：配置记录里没这个字段时也要默认启用。
     taskbarPreview: raw.taskbarPreview !== false,
   };
 }
 
 function persist(config: DesktopConfig): void {
-  const file = configPath();
-  mkdirSync(dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
-  renameSync(tmp, file);
+  setKv(CONFIG_KEY, JSON.stringify(config));
 }
 
 export function getConfig(): DesktopConfig {
   if (cached) return cached;
 
-  const file = configPath();
-  if (!existsSync(file)) {
+  const raw = getKv(CONFIG_KEY);
+  if (!raw) {
     cached = defaultConfig();
     persist(cached);
     return cached;
   }
 
   try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<DesktopConfig>;
-    cached = sanitize(parsed);
+    cached = sanitize(JSON.parse(raw) as Partial<DesktopConfig>);
   } catch {
-    // 配置文件损坏时退回默认值，但保留设备 id 让对端还能认出这台设备。
+    // 记录损坏时退回默认值（会生成新的设备 id），再写回一份干净的。
     cached = defaultConfig();
   }
   persist(cached);

@@ -1,19 +1,10 @@
 import { createHash } from 'node:crypto';
-import {
-  createReadStream,
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  utimes,
-  writeFileSync,
-} from 'node:fs';
+import { createReadStream, createWriteStream, existsSync, statSync, unlinkSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import type { Writable } from 'node:stream';
+import type { AudioCacheState } from '@shared/ipc';
+import { deleteMedia, getMedia, putMedia, touchMedia } from '../db/media';
 import { audioCacheDir, audioLimitBytes, trimCache } from './index';
 
 /**
@@ -35,11 +26,9 @@ export function audioCacheKey(platform: string, trackId: string, quality: string
   return `${platform}:${trackId}:${quality}`;
 }
 
-export type AudioCacheState = null | 'partial' | 'full';
-
 /**
  * 查询一首音频的缓存状态（纯本地磁盘查询，无副作用）。
- * - null：没有缓存（连文件都没有，或 sidecar 不可信）
+ * - null：没有缓存（连文件都没有，或元数据不可信）
  * - 'partial'：只有前缀，还没完整缓存
  * - 'full'：完整缓存，下次断网也能播
  */
@@ -48,7 +37,7 @@ export function queryAudioCacheState(key: string): AudioCacheState {
   const meta = readMeta(key);
   if (!existsSync(file) || meta.total === null || meta.total <= 0) return null;
   const size = statSync(file).size;
-  if (size > meta.total) return null; // sidecar 比文件还小，不可信
+  if (size > meta.total) return null; // 元数据比文件还小，不可信
   if (size >= meta.total) return 'full';
   return 'partial';
 }
@@ -61,36 +50,24 @@ function audioFile(key: string): string {
   return join(audioCacheDir(), `${hash(key)}.audio`);
 }
 
-function metaFile(key: string): string {
-  return join(audioCacheDir(), `${hash(key)}.json`);
-}
-
 function readMeta(key: string): AudioMeta {
-  try {
-    const parsed = JSON.parse(readFileSync(metaFile(key), 'utf8')) as AudioMeta;
-    return {
-      total:
-        typeof parsed.total === 'number' && parsed.total >= 0 ? parsed.total : null,
-      mime: typeof parsed.mime === 'string' ? parsed.mime : undefined,
-    };
-  } catch {
-    return { total: null };
-  }
+  const meta = getMedia('audio', hash(key));
+  if (!meta) return { total: null };
+  return {
+    total: meta.total !== null && meta.total >= 0 ? meta.total : null,
+    mime: meta.mime ?? undefined,
+  };
 }
 
-function writeMeta(key: string, meta: AudioMeta): void {
-  const file = metaFile(key);
-  const tmp = `${file}.tmp`;
+function writeMeta(key: string, meta: AudioMeta, bytes: number): void {
   try {
-    mkdirSync(audioCacheDir(), { recursive: true });
-    writeFileSync(tmp, JSON.stringify(meta), 'utf8');
-    renameSync(tmp, file);
-  } catch {
-    try {
-      unlinkSync(tmp);
-    } catch {
-      // ignore
-    }
+    putMedia('audio', hash(key), {
+      total: meta.total,
+      mime: meta.mime ?? null,
+      bytes,
+    });
+  } catch (error) {
+    console.error('[cache] 写入音频元数据失败：', error);
   }
 }
 
@@ -102,7 +79,7 @@ function cachedSize(file: string): number {
   }
 }
 
-/** 丢掉一整份音频缓存（不带 sidecar 的前缀不能留，否则会一直毒化这首歌）。 */
+/** 丢掉一整份音频缓存（没有元数据的前缀不能留，否则会一直毒化这首歌）。 */
 function discardAudioCache(key: string): void {
   try {
     unlinkSync(audioFile(key));
@@ -110,17 +87,18 @@ function discardAudioCache(key: string): void {
     // 还被读流占用：删不掉就留到下次；这次仍按未命中回源。
   }
   try {
-    unlinkSync(metaFile(key));
+    deleteMedia('audio', hash(key));
   } catch {
     // ignore
   }
 }
 
-function touch(file: string): void {
-  const now = new Date();
-  utimes(file, now, now, () => {
+function touchAudio(key: string): void {
+  try {
+    touchMedia('audio', hash(key));
+  } catch {
     // 访问时间只用于 LRU，失败不影响播放。
-  });
+  }
 }
 
 interface ByteRange {
@@ -208,7 +186,7 @@ export function serveAudioFromCache(
 
   const meta = readMeta(key);
   /*
-   * 前缀可用的前提是 sidecar 记着完整长度。没有 sidecar（进程被强杀、写到一半
+   * 前缀可用的前提是 DB 记着完整长度。没有元数据（进程被强杀、写到一半
    * 就退出）或长度对不上，这份缓存就不可信：若按「总长未知」以 206 + `*` 返回，
    * Chromium 算不出时长、进度条拖不动，播到前缀末尾还会直接判为播完跳下一首。
    * 整份丢掉、回源重下，让这首歌恢复正常。
@@ -234,7 +212,7 @@ export function serveAudioFromCache(
 
     if (parsed.start >= size) {
       if (complete) {
-        touch(file);
+        touchAudio(key);
         sendUnsatisfiable(res, total);
         return true;
       }
@@ -249,12 +227,12 @@ export function serveAudioFromCache(
       return true;
     }
 
-    touch(file);
+    touchAudio(key);
     sendRange(req, res, file, 206, parsed.start, end, total, mime);
     return true;
   }
 
-  touch(file);
+  touchAudio(key);
   if (complete) {
     // 完整曲目：可以按普通 200 返回，浏览器后续拖动也都能命中。
     sendRange(req, res, file, 200, 0, size - 1, total, mime);
@@ -316,17 +294,17 @@ export function createAudioCacheWriter(
       // ignore
     }
     try {
-      unlinkSync(metaFile(key));
+      deleteMedia('audio', hash(key));
     } catch {
       // ignore
     }
   };
 
   let pendingMeta: AudioMeta | null = null;
-  /** 等文件句柄真正关闭后再写 sidecar / 触发淘汰，避免 Windows 下占用冲突。 */
+  /** 等文件句柄真正关闭后再写元数据 / 触发淘汰，避免 Windows 下占用冲突。 */
   out.once('close', () => {
     cleanupEmpty();
-    if (!failed && written > 0 && pendingMeta) writeMeta(key, pendingMeta);
+    if (!failed && written > 0 && pendingMeta) writeMeta(key, pendingMeta, written);
     if (!failed && written > 0) {
       trimCache('audio');
     }

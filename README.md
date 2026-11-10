@@ -12,8 +12,8 @@ Milestones **M0–M5 are implemented**; M6 (polish and release) is in progress.
 
 **Foundations**
 - Three-process Electron architecture: main process + preload + renderer
-- Local BFF (bound to `127.0.0.1` only): `/api` reverse proxy, SSE passthrough, static hosting
-- Session cookies encrypted at rest via `safeStorage` in the main process — the renderer never sees credentials
+- Local BFF (bound to `127.0.0.1` only): `/api` reverse proxy, SSE passthrough, media streaming with HTTP Range. The page itself is served from the `sakura://app` custom scheme in both dev and release
+- Session cookies and "local-only" platform credentials are encrypted at rest via `safeStorage` and kept in the local SQLite database — the renderer never sees credentials
 - First-run server configuration, self-signed certificate detection, and SHA-256 fingerprint display
 - Login / register / logout, session persistence, automatic redirect to login on 401
 - Frameless custom title bar with drag region and window controls; the login and server-setup pages use the same bar
@@ -64,12 +64,28 @@ Windows only. Hovering the taskbar icon shows a self-drawn 320×200 card (cover,
 - Verifying requires a real Windows session: DWM only sends `WM_DWMSENDICONICTHUMBNAIL` while the thumbnail is actually visible.
 - macOS / Linux keep the system title bar and have no thumbnail toolbar; this feature is skipped entirely.
 
+## Local Data & Storage
+
+All main-process state lives in a single SQLite database, `sakura.db`, under Electron's `userData` directory. It uses Electron's built-in `node:sqlite` (WAL mode) — no native modules, rebuilds or `asarUnpack` needed — and on POSIX the file is created with `0600` permissions. Renderer UI preferences still use `localStorage`.
+
+| Table | Contents |
+| --- | --- |
+| `kv` | Desktop config (server URL, cache limits, device id, window bounds / position / maximized state), session token, and "local-only" platform credentials. Credential values are still encrypted with `safeStorage`. |
+| `offline_items` | Download index: platform / track ids, quality, size and the relative filename. |
+| `response_cache` | Lyric and detail JSON responses with TTLs, kept for offline fallback. |
+| `media_cache` | Audio / cover metadata only: total length, MIME type, bytes and last-accessed time. |
+
+**Media files are never stored in the database.** Audio prefixes, cover images and downloaded tracks remain on disk (`sakura-cache/audio/*.audio`, `sakura-cache/cover/*.img`, and the chosen download folder) and are still served by the local BFF over HTTP Range. Cache size reporting and LRU eviction run on SQL instead of scanning directories; downloads still write a `.part` file first and are renamed only on success.
+
+The app has not been released, so there is no import or cleanup for pre-release JSON files. To reset to a clean state, delete `sakura.db` (or the whole `userData` directory).
+
 ## Tech Stack
 
 - **Shell**: Electron 38 (main + preload + renderer), electron-vite, electron-builder
 - **UI**: Vue 3.5 (`<script setup>`), Pinia, Vue Router, TypeScript
 - **Graphics**: hand-written WebGL2 shaders (沉浸 / 雾笺), PixiJS v8 (绘光), three.js (町景)
 - **Native**: koffi FFI for Windows DWM / taskbar thumbnails; `safeStorage` for encrypted sessions
+- **Storage**: SQLite via Electron's built-in `node:sqlite` (WAL); media files stay on disk
 - **Quality**: `vue-tsc` + `tsc` type checks, CDP smoke scripts under `scripts/`
 
 ## Development
@@ -81,9 +97,9 @@ npm run dev
 
 In dev mode:
 
-- Renderer: Vite at `http://localhost:5173`
-- Main process BFF: `http://127.0.0.1:3210`
-- Vite proxies `/api` to the BFF; the renderer uses only relative paths
+- The page is loaded from `sakura://app` in both dev and release — same origin, same CSP, stable `localStorage`
+- In dev, the main-process protocol handler forwards static requests to Vite at `http://localhost:5173` (HMR still works) and API / media / SSE requests to the in-process BFF at `http://127.0.0.1:3210`
+- The renderer never talks to Vite or the BFF directly; neither port is visible to the page
 
 ## Build
 
@@ -106,11 +122,11 @@ python scripts/make-icon.py     # requires Pillow and NumPy
 ## Security Design
 
 - Renderer: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`
-- BFF binds to loopback only; in production, the initial page load requires a one-time `?k=<secret>` query param, which the server uses to issue an HttpOnly local-access cookie — preventing other local processes from calling `/api` directly
-- Session cookies are encrypted and stored in the main process; `Set-Cookie` headers are never forwarded to the renderer
-- Production static responses ship with CSP: scripts restricted to same-origin, audio restricted to same-origin + blob
+- BFF binds to loopback only and rejects every request without a per-launch random token, injected by the main-process `sakura://app` handler into the internal `x-sakura-bff` header. The token never reaches the page, so other local processes cannot call `/api` even if they discover the port
+- Session cookies are encrypted with `safeStorage` and stored in the main-process SQLite database; `Set-Cookie` headers are never forwarded to the renderer
+- CSP lives in `index.html` as a meta tag (the same file in dev and release): scripts restricted to same-origin, audio restricted to same-origin + blob
 - Self-signed certs are enabled explicitly per server; TLS verification is never disabled globally
-- Third-party platform credentials are never stored locally — only server-side stored credentials are used (product decision)
+- "Local-only" third-party platform credentials are encrypted at rest in the same database and injected by the main process per request — the renderer never sees the raw cookie
 
 ## Smoke Tests
 
@@ -130,14 +146,14 @@ node scripts/cdp-smoke.mjs smoke.png
 node scripts/cdp-flow.mjs
 ```
 
-`cdp-flow.mjs` assumes the app starts at the server-setup screen. To reset to a clean state, delete `%APPDATA%\Sakura Music\config.json` and `session.bin` (on macOS / Linux, the corresponding `app.getPath('userData')` directory).
+`cdp-flow.mjs` assumes the app starts at the server-setup screen. To reset to a clean state, delete `sakura.db` from the app's `userData` directory (`%APPDATA%\Sakura Music\` on Windows; the corresponding `app.getPath('userData')` directory on macOS / Linux). Media caches under `sakura-cache/` and downloaded tracks are files outside the database and can be removed separately.
 
 ## Known Limitations
 
 - The taskbar thumbnail preview is Windows-only (Win10 / Win11) and depends on DWM
 - No auto-update — users manually install new releases
 - Not code-signed: Windows SmartScreen will warn, macOS requires right-click → Open
-- "Local-only" credential mode is intentionally not supported (product decision)
+- "Local-only" platform credentials are stored on this device only and are not synced across devices
 - Gateway protocol specs are maintained in the gateway repository; this repo contains only the client implementation
 - M6 polish and release work is still in progress
 
@@ -146,6 +162,7 @@ node scripts/cdp-flow.mjs
 ```
 src/
   main/        Main process: BFF, config, session, IPC, offline download + desktop lyric / now-playing windows
+    db/        Local SQLite: kv (config / credentials), offline index, response + media cache metadata
     windows/   Window creation, rounded corners, Windows taskbar thumbnail preview
   preload/     Minimal desktop capabilities exposed via contextBridge
   renderer/    Vue 3 desktop UI
