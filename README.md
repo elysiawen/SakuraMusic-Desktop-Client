@@ -23,7 +23,7 @@ Milestones **M0–M5 are implemented**; M6 (polish and release) is in progress.
 **Browse & Playback**
 - Home discovery, unified search, quality picker with per-quality file sizes
 - Queue, shuffle, repeat, previous / next, media session / SMTC integration
-- Full-screen lyrics with clickable artist and album links, plus a separate desktop lyric window
+- Full-screen lyrics with clickable artist and album links, shown as an in-app overlay by default or in a **separate full-screen player window**; a compact **desktop lyric bar** (borderless, always-on-top, transparent) is also available and can be locked (click-through) with its position remembered across launches
 - Room / follow tracks are enriched on demand while playing: artist and album IDs, available qualities and their sizes
 
 **Now Playing styles**
@@ -36,13 +36,16 @@ Five full-screen layouts, switchable from the player bar's style menu and lazy-l
 
 All five share one shell for expand / collapse and cross-fade. Everything is rendered locally; no audio or lyric data leaves the machine.
 
+The five full-screen layouts can also be opened in a **standalone player window** (`?window=nowplaying`) — at most one at a time, frameless on Windows and hidden-inset on macOS; it shares playback state with the main window and is mutually exclusive with the in-app overlay.
+
 **Library & Offline**
 - Favorites, play history, local playlists, offline playback of downloaded tracks
+- User-initiated downloads are written to a local library with a per-track index (key, platform, requested and actual quality, size). Files are fetched over the same path as playback — a CDN direct link with anti-leech headers, falling back to the gateway stream — and written to a `.part` file first, then renamed only on success, so an interrupted download never leaves a half-indexed file. The real audio container is sniffed from the file header, so lossless streams mislabeled `application/octet-stream` land as `.flac` rather than `.bin`. Downloaded tracks stream back to the player from the local BFF (`/offline/stream/<key>`).
 - User-initiated downloads have **no storage cap**; only automatically cached audio and cover art are LRU-bounded
 
 **Listen Together & Devices**
 - Server-authoritative playback in rooms: the local player is mirrored back every 250 ms, so transport actions are reported to the server instead of being applied locally
-- Multi-device follow / remote control
+- Multi-device presence rides a single SSE connection. State is broadcast sparsely (only on play / pause / track / queue / mode / volume / follow changes, plus a drift-correcting resync) and progress is inferred from a server-clock offset, so there is no periodic resync traffic. Remote control of another device covers play / pause / next / previous / seek / volume / mode, queue operations (jump, remove, append) and **take-over** (the target hands its queue and position back). **Follow** mirrors another device's playback; follow chains resolve to the source so mirrors don't stack, and a 15 s grace period tolerates momentary reconnects without breaking sync.
 - Personal radio is mutually exclusive with Listen Together **only on the device holding the room seat**: a spectator device (another device on the same account is playing) can still start and continue its own radio; creating / joining / taking the seat back still requires leaving the radio first
 
 **Interaction conventions**
@@ -142,7 +145,7 @@ node scripts/cdp-flow.mjs
 
 ```
 src/
-  main/        Main process: BFF, config, session, IPC
+  main/        Main process: BFF, config, session, IPC, offline download + desktop lyric / now-playing windows
     windows/   Window creation, rounded corners, Windows taskbar thumbnail preview
   preload/     Minimal desktop capabilities exposed via contextBridge
   renderer/    Vue 3 desktop UI
