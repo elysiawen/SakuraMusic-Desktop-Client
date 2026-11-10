@@ -108,6 +108,18 @@ export function serveStatic(
     return;
   }
 
+  // 静态资源缺文件绝不能回落到 HTML：浏览器拿到 200 + text/html 的 index.html，
+  // 动态 import 只会抛一个笼统的解析错误，Vue 异步组件又会把失败渲染成空节点，
+  // 表现就是全屏播放页只剩 AppShell 那层深色底色。SPA 回退只给页面路由。
+  const looksLikeAsset =
+    decoded.startsWith('/assets/') ||
+    /\.(?:js|mjs|css|json|map|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|txt)$/i.test(decoded);
+  if (looksLikeAsset) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Asset not found.');
+    return;
+  }
+
   // SPA 路由回退：没匹配到文件的路径交给 index.html。
   const indexFile = join(rootPath, 'index.html');
   if (existsSync(indexFile)) {

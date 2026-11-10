@@ -1,4 +1,4 @@
-import { defineAsyncComponent, type Component } from 'vue';
+import { defineAsyncComponent, type AsyncComponentLoader, type Component } from 'vue';
 import ClassicMode from './modes/ClassicMode.vue';
 import ImmersiveMode from './modes/ImmersiveMode.vue';
 import ModeLoading from './ModeLoading.vue';
@@ -7,24 +7,31 @@ import ModeLoading from './ModeLoading.vue';
  * 经典/沉浸体积很小（几十 KB），保持同步引入——打开播放页的那一帧就能渲染，
  * 不会先露出主界面。雾笺/绘光带着 WebGL 与 Pixi 运行时，按需加载：切换瞬间
  * 先用 ModeLoading 全屏盖住，等 chunk 到了再交接给真正的样式。
+ *
+ * 异步样式必须有失败兜底：Vue 在 loader reject 后默认渲染一个空注释节点，
+ * 发布包里 chunk 缺失或 CSP 拦截时，播放页就只剩 AppShell 那层深色底色。
+ * 这里重试一次，仍失败则退回经典样式，保证页面永远有内容可画。
  */
-const NebbiaMode = defineAsyncComponent({
-  loader: () => import('./modes/NebbiaMode.vue'),
-  loadingComponent: ModeLoading,
-  delay: 0,
-});
+function lazyMode(loader: AsyncComponentLoader): Component {
+  return defineAsyncComponent({
+    loader,
+    loadingComponent: ModeLoading,
+    errorComponent: ClassicMode,
+    delay: 0,
+    timeout: 15000,
+    onError(error, retry, fail, attempts) {
+      console.error('[now-playing] 样式资源加载失败', error);
+      if (attempts <= 1) retry();
+      else fail();
+    },
+  });
+}
+
+const NebbiaMode = lazyMode(() => import('./modes/NebbiaMode.vue'));
 const NebbiaSettings = defineAsyncComponent(() => import('./modes/NebbiaSettings.vue'));
-const LumiereMode = defineAsyncComponent({
-  loader: () => import('./modes/LumiereMode.vue'),
-  loadingComponent: ModeLoading,
-  delay: 0,
-});
+const LumiereMode = lazyMode(() => import('./modes/LumiereMode.vue'));
 const LumiereSettings = defineAsyncComponent(() => import('./modes/LumiereSettings.vue'));
-const MachiMode = defineAsyncComponent({
-  loader: () => import('./modes/MachiMode.vue'),
-  loadingComponent: ModeLoading,
-  delay: 0,
-});
+const MachiMode = lazyMode(() => import('./modes/MachiMode.vue'));
 const MachiSettings = defineAsyncComponent(() => import('./modes/MachiSettings.vue'));
 
 /**

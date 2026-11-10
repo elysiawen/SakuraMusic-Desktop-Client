@@ -59,8 +59,13 @@ async function route(
   const pathname = url.pathname;
 
   if (!options.dev && url.searchParams.get('k') === secret) {
+    // 只摘掉一次性令牌，其余 query 必须原样带回：独立播放窗口 / 桌面歌词窗口
+    // 靠 `?window=nowplaying` / `?window=lyric` 决定挂哪个根组件。重定向成光秃秃的
+    // `/` 会让发布版弹出窗口加载整个主壳，看起来就是一层底色、播放页没出来。
+    url.searchParams.delete('k');
+    const query = url.searchParams.toString();
     res.writeHead(302, {
-      Location: '/',
+      Location: `${pathname}${query ? `?${query}` : ''}`,
       'Set-Cookie': `sakura_bff=${secret}; Path=/; HttpOnly; SameSite=Strict`,
       'Cache-Control': 'no-store',
     });
