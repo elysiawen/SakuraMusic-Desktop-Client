@@ -66,18 +66,18 @@ Sakura Music 的桌面客户端 —— Windows / macOS / Linux。
 
 ## 本地数据存储
 
-主进程的本地状态集中在一个 SQLite 数据库 `sakura.db` 里，位于 Electron 的 `userData` 目录。使用 Electron 内置的 `node:sqlite`（WAL 模式），不需要 native 模块、rebuild 或 `asarUnpack`；POSIX 下库文件权限为 `0600`。渲染进程的界面偏好仍使用 `localStorage`。
+主进程的结构化数据集中在一个 SQLite 数据库 `sakura.db` 里，位于 Electron 的 `userData` 目录。使用 Electron 内置的 `node:sqlite`（WAL 模式），不需要 native 模块、rebuild 或 `asarUnpack`；POSIX 下库文件权限为 `0600`。内容本身仍以文件保存；渲染进程的界面偏好使用 `localStorage`。
 
 | 表 | 内容 |
 | --- | --- |
 | `kv` | 桌面配置（服务器地址、缓存额度、设备标识、窗口尺寸 / 位置 / 最大化状态）、会话令牌、以及「仅本机」平台凭据；凭据值仍由 `safeStorage` 加密。 |
 | `offline_items` | 下载索引：平台 / 曲目 ID、音质、大小与相对文件名。 |
-| `response_cache` | 带 TTL 的歌词与详情 JSON 响应，供断网回退。 |
+| `response_cache` | 带 TTL 的歌曲详情 JSON 响应，供断网回退。 |
 | `media_cache` | 仅音频 / 封面元数据：完整长度、MIME、字节数、最近访问时间。 |
 
-**媒体文件一律不入库。** 音频前缀、封面图与已下载曲目仍以文件形式留在磁盘（`sakura-cache/audio/*.audio`、`sakura-cache/cover/*.img` 与用户选择的下载目录），仍由本地 BFF 通过 HTTP Range 流式返回。缓存用量统计与 LRU 淘汰改走 SQL，不再扫描目录；下载依旧先写 `.part` 文件，成功后才改名。
+**媒体文件与歌词内容一律不入库。** 歌词按曲目缓存为 `sakura-cache/lyric/*.json` 的 JSON 响应文本，文件 mtime 即保存时间，按设置里的保留天数判断新鲜度，过期后仍留作断网回退。音频前缀、封面图与已下载曲目仍以文件形式留在磁盘（`sakura-cache/audio/*.audio`、`sakura-cache/cover/*.img` 与用户选择的下载目录），仍由本地 BFF 通过 HTTP Range 流式返回。音频 / 封面的用量统计与 LRU 淘汰走 SQL；下载依旧先写 `.part` 文件，成功后才改名。
 
-项目尚未发布，代码中没有旧版 JSON 的导入或清理逻辑。要重置到干净状态，删除 `sakura.db`（或整个 `userData` 目录）即可。
+项目尚未发布，代码中没有旧版 JSON 的导入或清理逻辑。要重置到干净状态，删除 `sakura.db`（或整个 `userData` 目录）即可；歌词缓存位于 `sakura-cache/lyric`，可在设置页清理歌词缓存。
 
 ## 技术栈
 
@@ -85,7 +85,7 @@ Sakura Music 的桌面客户端 —— Windows / macOS / Linux。
 - **界面**：Vue 3.5（`<script setup>`）、Pinia、Vue Router、TypeScript
 - **图形**：手写 WebGL2 着色器（沉浸 / 雾笺）、PixiJS v8（绘光）、three.js（町景）
 - **原生**：koffi FFI 调用 Windows DWM / 任务栏缩略图；`safeStorage` 加密会话
-- **存储**：Electron 内置 `node:sqlite`（WAL 模式）；媒体文件仍留在磁盘
+- **存储**：Electron 内置 `node:sqlite`（WAL 模式）存结构化数据；歌词、音频、封面与下载文件仍留在磁盘
 - **质量**：`vue-tsc` + `tsc` 类型检查、`scripts/` 下的 CDP 冒烟脚本
 
 ## 开发

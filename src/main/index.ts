@@ -151,7 +151,7 @@ if (!hasLock) {
     // dev 时协议层把静态请求转发给 Vite，生产时直接读 out/renderer；
     // 页面本身两边都从 sakura://app 加载，不再有 origin / CSP 差异。
     const devServerUrl = process.env.ELECTRON_RENDERER_URL?.replace(/\/+$/, '') ?? null;
-    // 本地数据库：离线索引与 lyric/meta 响应缓存都在这里。必须赶在 BFF 起来
+    // 本地数据库：离线索引与 meta 响应缓存都在这里。必须赶在 BFF 起来
     // 之前初始化，否则首个 /api 或 /offline 请求会拿到未初始化的连接。
     try {
       initDatabase(app.getPath('userData'));

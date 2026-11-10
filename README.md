@@ -66,18 +66,18 @@ Windows only. Hovering the taskbar icon shows a self-drawn 320×200 card (cover,
 
 ## Local Data & Storage
 
-All main-process state lives in a single SQLite database, `sakura.db`, under Electron's `userData` directory. It uses Electron's built-in `node:sqlite` (WAL mode) — no native modules, rebuilds or `asarUnpack` needed — and on POSIX the file is created with `0600` permissions. Renderer UI preferences still use `localStorage`.
+Main-process metadata lives in a single SQLite database, `sakura.db`, under Electron's `userData` directory. It uses Electron's built-in `node:sqlite` (WAL mode) — no native modules, rebuilds or `asarUnpack` needed — and on POSIX the file is created with `0600` permissions. Content itself is kept as files; renderer UI preferences still use `localStorage`.
 
 | Table | Contents |
 | --- | --- |
 | `kv` | Desktop config (server URL, cache limits, device id, window bounds / position / maximized state), session token, and "local-only" platform credentials. Credential values are still encrypted with `safeStorage`. |
 | `offline_items` | Download index: platform / track ids, quality, size and the relative filename. |
-| `response_cache` | Lyric and detail JSON responses with TTLs, kept for offline fallback. |
+| `response_cache` | Detail JSON responses with TTLs, kept for offline fallback. |
 | `media_cache` | Audio / cover metadata only: total length, MIME type, bytes and last-accessed time. |
 
-**Media files are never stored in the database.** Audio prefixes, cover images and downloaded tracks remain on disk (`sakura-cache/audio/*.audio`, `sakura-cache/cover/*.img`, and the chosen download folder) and are still served by the local BFF over HTTP Range. Cache size reporting and LRU eviction run on SQL instead of scanning directories; downloads still write a `.part` file first and are renamed only on success.
+**Media files and lyric content are never stored in the database.** Lyrics are cached as one JSON response per track in `sakura-cache/lyric/*.json` (the file's mtime is its save time), with a configurable freshness window and a stale copy for offline fallback. Audio prefixes, cover images and downloaded tracks remain on disk (`sakura-cache/audio/*.audio`, `sakura-cache/cover/*.img`, and the chosen download folder) and are still served by the local BFF over HTTP Range. Audio / cover size reporting and LRU eviction run on SQL; downloads still write a `.part` file first and are renamed only on success.
 
-The app has not been released, so there is no import or cleanup for pre-release JSON files. To reset to a clean state, delete `sakura.db` (or the whole `userData` directory).
+The app has not been released, so there is no import or cleanup for pre-release JSON files. To reset to a clean state, delete `sakura.db` (or the whole `userData` directory); lyric caches live in `sakura-cache/lyric` and are removed by clearing the lyric cache in Settings.
 
 ## Tech Stack
 
@@ -85,7 +85,7 @@ The app has not been released, so there is no import or cleanup for pre-release 
 - **UI**: Vue 3.5 (`<script setup>`), Pinia, Vue Router, TypeScript
 - **Graphics**: hand-written WebGL2 shaders (沉浸 / 雾笺), PixiJS v8 (绘光), three.js (町景)
 - **Native**: koffi FFI for Windows DWM / taskbar thumbnails; `safeStorage` for encrypted sessions
-- **Storage**: SQLite via Electron's built-in `node:sqlite` (WAL); media files stay on disk
+- **Storage**: SQLite via Electron's built-in `node:sqlite` (WAL) for metadata; lyrics, audio, covers and downloads stay on disk
 - **Quality**: `vue-tsc` + `tsc` type checks, CDP smoke scripts under `scripts/`
 
 ## Development

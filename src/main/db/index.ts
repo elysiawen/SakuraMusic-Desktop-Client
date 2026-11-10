@@ -11,7 +11,7 @@ import { join } from 'node:path';
  *
  *   kv                桌面配置、会话令牌、平台凭据（值经 safeStorage 加密）
  *   offline_items     离线下载记录（只记 file_name，不记音频）
- *   response_cache    lyric/meta 的 JSON 响应文本
+ *   response_cache    meta 的 JSON 响应文本（歌词内容不入库）
  *   media_cache       audio/cover 的元数据：total / mime / bytes / accessed_at
  */
 

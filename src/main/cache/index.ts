@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { app } from 'electron';
-import { mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   CACHE_KINDS,
@@ -16,14 +16,17 @@ import { clearMedia, deleteMedia, mediaUsage, oldestMedia } from '../db/media';
  * 桌面端缓存。
  *
  * DB 只放结构化数据：
- *   - lyric / meta：上游 JSON 响应文本
+ *   - meta：上游 JSON 响应文本
  *   - audio / cover：total / mime / bytes / accessed_at 等元数据
- * 媒体文件仍在 userData 下的 `sakura-cache`，按 <hash>.audio / <hash>.img 存；
- * 统计、LRU、清理都查表，不再 readdir + stat 整个目录。
+ * 歌词内容与媒体文件都不入库，以文件形式留在 userData 下的 `sakura-cache`：
+ *   - lyric/<hash>.json：歌词响应文本，mtime 即保存时间
+ *   - audio/<hash>.audio、cover/<hash>.img：音频前缀与封面
+ * 音频/封面的统计与 LRU 查表；歌词按文件直接读取，统计时扫一次 lyric 目录。
  */
 
 const MB = 1024 * 1024;
 const ROOT_DIR = 'sakura-cache';
+const LYRIC_EXT = '.json';
 
 export type JsonCacheKind = 'lyric' | 'meta';
 
@@ -78,9 +81,40 @@ function removeFile(file: string): void {
   }
 }
 
+interface CachedResponse {
+  payload: string;
+  savedAt: number;
+}
+
+/** 歌词内容按曲目存成文件，不进数据库；mtime 天然就是保存时间。 */
+function readLyricFile(hashed: string): CachedResponse | null {
+  const file = join(cacheDir('lyric'), `${hashed}${LYRIC_EXT}`);
+  try {
+    const savedAt = statSync(file).mtimeMs;
+    const payload = readFileSync(file, 'utf8');
+    JSON.parse(payload);
+    return { payload, savedAt };
+  } catch {
+    // 不存在或写坏了都按未命中处理，下次请求会重新落一份。
+    return null;
+  }
+}
+
+function writeLyricFile(hashed: string, payload: string): void {
+  try {
+    writeFileSync(join(cacheDir('lyric'), `${hashed}${LYRIC_EXT}`), payload, 'utf8');
+  } catch (error) {
+    console.error('[cache] 写入歌词缓存失败：', error);
+  }
+}
+
+function readCached(kind: JsonCacheKind, hashed: string): CachedResponse | null {
+  return kind === 'lyric' ? readLyricFile(hashed) : readResponse(hashed);
+}
+
 /** 读取仍新鲜的响应；过期返回 null，但保留记录供断网回退。 */
 export function readResponseCache(kind: JsonCacheKind, key: string): string | null {
-  const entry = readResponse(kind, cacheName(key));
+  const entry = readCached(kind, cacheName(key));
   if (!entry) return null;
   if (Date.now() - entry.savedAt > responseTtlMs(kind)) return null;
   return entry.payload;
@@ -88,12 +122,17 @@ export function readResponseCache(kind: JsonCacheKind, key: string): string | nu
 
 /** 忽略 TTL 读取旧响应，只在网关不可达时使用。 */
 export function readStaleResponseCache(kind: JsonCacheKind, key: string): string | null {
-  return readResponse(kind, cacheName(key))?.payload ?? null;
+  return readCached(kind, cacheName(key))?.payload ?? null;
 }
 
 export function writeResponseCache(kind: JsonCacheKind, key: string, payload: string): void {
+  const hashed = cacheName(key);
+  if (kind === 'lyric') {
+    writeLyricFile(hashed, payload);
+    return;
+  }
   try {
-    writeResponse(kind, cacheName(key), payload);
+    writeResponse(hashed, payload);
   } catch (error) {
     // 缓存写失败不影响本次请求，但要留痕，避免静默降级难排查。
     console.error('[cache] 写入响应缓存失败：', error);
@@ -124,13 +163,35 @@ export function responseCacheKey(pathname: string, search: string): string {
 /* 统计 / 清理 / LRU                                                   */
 /* ------------------------------------------------------------------ */
 
+/** 歌词是文件，统计时扫一次目录；meta 与媒体元数据直接查表。 */
+function lyricUsage(): { bytes: number; entries: number } {
+  const dir = join(cacheRoot(), 'lyric');
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return { bytes: 0, entries: 0 };
+  }
+  let bytes = 0;
+  let entries = 0;
+  for (const name of names) {
+    if (!name.endsWith(LYRIC_EXT)) continue;
+    try {
+      bytes += statSync(join(dir, name)).size;
+      entries += 1;
+    } catch {
+      // 文件刚好被清理掉就跳过。
+    }
+  }
+  return { bytes, entries };
+}
+
 export function getCacheStats(): CacheStats {
-  const response = responseUsage();
+  const meta = responseUsage();
   const media = mediaUsage();
   const kinds: CacheUsage[] = CACHE_KINDS.map((kind) => {
-    if (kind === 'lyric' || kind === 'meta') {
-      return { kind, bytes: response[kind].bytes, entries: response[kind].entries };
-    }
+    if (kind === 'lyric') return { kind, ...lyricUsage() };
+    if (kind === 'meta') return { kind, bytes: meta.bytes, entries: meta.entries };
     return { kind, bytes: media[kind].bytes, entries: media[kind].entries };
   });
   return {
@@ -139,8 +200,7 @@ export function getCacheStats(): CacheStats {
   };
 }
 
-/** 删掉目录里的媒体文件与写入中途留下的 .part。 */
-function clearDir(dir: string): void {
+function clearDir(dir: string, extensions: readonly string[]): void {
   let names: string[];
   try {
     names = readdirSync(dir);
@@ -148,9 +208,7 @@ function clearDir(dir: string): void {
     return;
   }
   for (const name of names) {
-    if (name.endsWith('.audio') || name.endsWith('.img') || name.endsWith('.part')) {
-      removeFile(join(dir, name));
-    }
+    if (extensions.some((ext) => name.endsWith(ext))) removeFile(join(dir, name));
   }
 }
 
@@ -158,9 +216,17 @@ function clearDir(dir: string): void {
 export function clearCache(kind?: CacheKind): void {
   const targets: CacheKind[] = kind ? [kind] : [...CACHE_KINDS];
   for (const target of targets) {
-    if (target === 'lyric' || target === 'meta') clearResponses(target);
-    else clearMedia(target);
-    clearDir(join(cacheRoot(), target));
+    if (target === 'meta') {
+      clearResponses();
+      continue;
+    }
+    if (target === 'lyric') {
+      clearDir(join(cacheRoot(), 'lyric'), [LYRIC_EXT]);
+      continue;
+    }
+    clearMedia(target);
+    const ext = target === 'audio' ? '.audio' : '.img';
+    clearDir(join(cacheRoot(), target), [ext, '.part']);
   }
 }
 

@@ -1,9 +1,7 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { getDb } from './index';
 
-/** lyric/meta 的 JSON 响应缓存（纯文本数据，不是媒体文件）。 */
-
-type ResponseKind = 'lyric' | 'meta';
+/** meta 的 JSON 响应缓存；歌词内容是磁盘文件，不进数据库。 */
 
 interface ResponseEntry {
   payload: string;
@@ -22,7 +20,6 @@ interface Statements {
   write: StatementSync;
   remove: StatementSync;
   clear: StatementSync;
-  clearAll: StatementSync;
   usage: StatementSync;
 }
 
@@ -35,54 +32,47 @@ function sql(): Statements {
   if (stmts && owner === db) return stmts;
   owner = db;
   stmts = {
-    read: db.prepare('SELECT payload, saved_at FROM response_cache WHERE kind = ? AND cache_key = ?'),
+    read: db.prepare(
+      "SELECT payload, saved_at FROM response_cache WHERE kind = 'meta' AND cache_key = ?",
+    ),
     write: db.prepare(`
       INSERT INTO response_cache (kind, cache_key, payload, bytes, saved_at, accessed_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES ('meta', ?, ?, ?, ?, ?)
       ON CONFLICT(kind, cache_key) DO UPDATE SET
         payload=excluded.payload, bytes=excluded.bytes,
         saved_at=excluded.saved_at, accessed_at=excluded.accessed_at`),
-    remove: db.prepare('DELETE FROM response_cache WHERE kind = ? AND cache_key = ?'),
-    clear: db.prepare('DELETE FROM response_cache WHERE kind = ?'),
-    clearAll: db.prepare('DELETE FROM response_cache'),
+    remove: db.prepare("DELETE FROM response_cache WHERE kind = 'meta' AND cache_key = ?"),
+    clear: db.prepare("DELETE FROM response_cache WHERE kind = 'meta'"),
     usage: db.prepare(
-      'SELECT kind, COUNT(*) AS entries, COALESCE(SUM(bytes), 0) AS bytes FROM response_cache GROUP BY kind',
+      "SELECT COUNT(*) AS entries, COALESCE(SUM(bytes), 0) AS bytes FROM response_cache WHERE kind = 'meta'",
     ),
   };
   return stmts;
 }
 
 /** 读一条；payload 不是合法 JSON 时按损坏处理，删掉这一行。 */
-export function readResponse(kind: ResponseKind, cacheKey: string): ResponseEntry | null {
-  const row = sql().read.get(kind, cacheKey) as Row | undefined;
+export function readResponse(cacheKey: string): ResponseEntry | null {
+  const row = sql().read.get(cacheKey) as Row | undefined;
   if (!row || typeof row.payload !== 'string') return null;
   try {
     JSON.parse(row.payload);
   } catch {
-    sql().remove.run(kind, cacheKey);
+    sql().remove.run(cacheKey);
     return null;
   }
   return { payload: row.payload, savedAt: Number(row.saved_at) || 0 };
 }
 
-export function writeResponse(kind: ResponseKind, cacheKey: string, payload: string): void {
+export function writeResponse(cacheKey: string, payload: string): void {
   const now = Date.now();
-  sql().write.run(kind, cacheKey, payload, Buffer.byteLength(payload, 'utf8'), now, now);
+  sql().write.run(cacheKey, payload, Buffer.byteLength(payload, 'utf8'), now, now);
 }
 
-export function clearResponses(kind?: ResponseKind): void {
-  if (kind) sql().clear.run(kind);
-  else sql().clearAll.run();
+export function clearResponses(): void {
+  sql().clear.run();
 }
 
-export function responseUsage(): Record<ResponseKind, Usage> {
-  const result: Record<ResponseKind, Usage> = {
-    lyric: { bytes: 0, entries: 0 },
-    meta: { bytes: 0, entries: 0 },
-  };
-  for (const row of sql().usage.all() as Row[]) {
-    if (row.kind !== 'lyric' && row.kind !== 'meta') continue;
-    result[row.kind] = { bytes: Number(row.bytes) || 0, entries: Number(row.entries) || 0 };
-  }
-  return result;
+export function responseUsage(): Usage {
+  const row = sql().usage.get() as Row;
+  return { bytes: Number(row.bytes) || 0, entries: Number(row.entries) || 0 };
 }
