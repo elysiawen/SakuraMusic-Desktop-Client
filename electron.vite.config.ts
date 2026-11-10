@@ -32,25 +32,10 @@ export default defineConfig({
     server: {
       port: 5173,
       strictPort: true,
-      proxy: {
-        // 页面、API、音频与离线库在开发时也要同源：这些都转发给主进程里的 BFF。
-        '/api': {
-          target: 'http://127.0.0.1:3210',
-          changeOrigin: false,
-        },
-        '/media': {
-          target: 'http://127.0.0.1:3210',
-          changeOrigin: false,
-        },
-        '/offline': {
-          target: 'http://127.0.0.1:3210',
-          changeOrigin: false,
-        },
-        '/connect': {
-          target: 'http://127.0.0.1:3210',
-          changeOrigin: false,
-        },
-      },
+      // 页面走 sakura://app，API 由主进程协议层转发到 BFF，Vite 不再做代理。
+      // HMR 必须显式给地址：client 的 import.meta.url 是 sakura://app，
+      // 靠它推不出 WebSocket 该连哪里。
+      hmr: { host: 'localhost', port: 5173, protocol: 'ws' },
     },
   },
 });

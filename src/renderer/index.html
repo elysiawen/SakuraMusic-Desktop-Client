@@ -2,6 +2,15 @@
 <html lang="zh-CN" data-theme="light" data-palette="deep">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      CSP 跟着 HTML 走：dev 由 Vite 提供、release 由 sakura:// 协议提供，是同一份文件、
+      同一套策略，不再依赖某一侧服务器注入响应头。frame-ancestors 只对 header 有效，
+      已省略（Electron 窗口本来也不允许被嵌套）。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: https:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; connect-src 'self' ws:; object-src 'none'; base-uri 'self'"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
     <title>Sakura Music</title>
@@ -63,27 +72,8 @@
         .boot-spinner { animation-duration: 2s; }
       }
     </style>
-    <script>
-      (function () {
-        // 副窗口（桌面歌词 / 弹出播放页）不显示加载层。
-        if (new URLSearchParams(location.search).get('window')) {
-          document.documentElement.setAttribute('data-boot-hidden', '1');
-        }
-        try {
-          var t = JSON.parse(localStorage.getItem('sakura.desktop.theme') || '{}');
-          var dark = t.mode === 'dark' ||
-            (t.mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-          if (dark) document.documentElement.setAttribute('data-boot-dark', '1');
-          var accents = {
-            sakura: '#ff7aa2', matcha: '#6fc47a', deep: '#5b8cff',
-            wisteria: '#a78bfa', sunset: '#ff9a62', ink: '#9aa7bd'
-          };
-          document.documentElement.style.setProperty('--boot-accent', accents[t.palette] || '#5b8cff');
-        } catch (e) {
-          /* 存储不可用就用默认配色 */
-        }
-      })();
-    </script>
+    <!-- 外置：CSP 是 script-src 'self'，内联脚本在生产包里会被拦掉（见 boot.js）。 -->
+    <script src="./boot.js"></script>
   </head>
   <body>
     <div id="app"></div>

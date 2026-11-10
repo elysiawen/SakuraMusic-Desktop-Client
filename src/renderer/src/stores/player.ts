@@ -18,7 +18,6 @@ import { useToast } from '@/composables/useToast';
 import { cachedImage } from '@/utils/cacheImage';
 import { QUALITY_ORDER } from '@/utils/track';
 import { useOfflineStore } from './offline';
-import { setBeforeStateFlush } from '@/utils/stateSync';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 export type PlayMode = 'order' | 'all' | 'one' | 'shuffle';
@@ -302,7 +301,7 @@ export const usePlayerStore = defineStore('player', () => {
     }, 2000);
   }
 
-  /** 窗口卸载前把节流挂起的写入立刻做完，交给状态镜像层同步到主进程。 */
+  /** 窗口卸载前把节流挂起的写入立刻做完，避免最后两秒进度丢失。 */
   function flushPersist(): void {
     if (persistTimer !== undefined) {
       window.clearTimeout(persistTimer);
@@ -310,7 +309,12 @@ export const usePlayerStore = defineStore('player', () => {
     }
     persist();
   }
-  setBeforeStateFlush(flushPersist);
+  window.addEventListener('pagehide', flushPersist);
+  window.addEventListener('beforeunload', flushPersist);
+  document.addEventListener('visibilitychange', () => {
+    // 收进托盘 / 切走窗口时也会触发，顺手存一次。
+    if (document.visibilityState === 'hidden') flushPersist();
+  });
 
   function rememberProxyOnly(platform: Platform): void {
     if (proxyOnly.value.includes(platform)) return;

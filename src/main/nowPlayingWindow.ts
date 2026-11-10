@@ -2,29 +2,23 @@ import { BrowserWindow, shell } from 'electron';
 import { join } from 'node:path';
 // 与主窗口同源的任务栏/窗口图标。
 import appIcon from '../../build/icon.png?asset';
+import { APP_ENTRY, APP_ORIGIN } from './protocol';
 import { applyRoundedRegion, needsRoundedRegion } from './windows/rounded';
 
 interface InitNowPlayingWindowOptions {
-  bffUrl: string;
-  secret: string;
   /** 主窗口句柄随重建而变，所以取函数。 */
   getMainWindow: () => BrowserWindow | null;
 }
 
-let entryUrl: string | null = null;
-let bffUrl: string | null = null;
+/** 固定 origin：renderer 自己按 ?window= 分支挂载，不再有 302 吞参数的问题。 */
+const entryUrl = `${APP_ENTRY}?window=nowplaying`;
 let getMainWindow: (() => BrowserWindow | null) | null = null;
 let npWindow: BrowserWindow | null = null;
 /** 最近一次播放快照：弹出窗口挂载晚于主窗口首拍时不丢。 */
 let lastState: unknown = null;
 
 export function initNowPlayingWindow(options: InitNowPlayingWindowOptions): void {
-  bffUrl = options.bffUrl;
   getMainWindow = options.getMainWindow;
-  // 与桌面歌词窗口同款入口约定：renderer 自己按 ?window= 分支挂载。
-  entryUrl = process.env.ELECTRON_RENDERER_URL
-    ? `${process.env.ELECTRON_RENDERER_URL}?window=nowplaying`
-    : `${options.bffUrl}/?k=${encodeURIComponent(options.secret)}&window=nowplaying`;
 }
 
 function current(): BrowserWindow | null {
@@ -119,10 +113,9 @@ export function openNowPlayingWindow(dark = false): void {
 
   window.webContents.on('will-navigate', (event, url) => {
     const allowed =
-      !!bffUrl &&
-      (url.startsWith(bffUrl) ||
-        url.startsWith('http://localhost:5173') ||
-        url.startsWith('http://127.0.0.1:5173'));
+      url.startsWith(APP_ORIGIN) ||
+      url.startsWith('http://localhost:5173') ||
+      url.startsWith('http://127.0.0.1:5173');
     if (!allowed) {
       event.preventDefault();
       if (/^https?:\/\//i.test(url)) void shell.openExternal(url);

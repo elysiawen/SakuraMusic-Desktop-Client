@@ -3,8 +3,8 @@ import type { ApiErrorPayload } from './types';
 /**
  * 渲染进程的 API 客户端。
  *
- * 所有请求都是相对 `/api`：开发时由 Vite 代理到主进程 BFF，生产时页面由 BFF 同源托管。
- * 会话 Cookie 不在渲染进程里，它由主进程维护。
+ * 所有请求都是相对 `/api`，页面固定在 `sakura://app`：dev 与 release 都由主进程的
+ * 协议层转发到进程内 BFF，会话 Cookie 不在渲染进程里，它由主进程维护。
  */
 
 export class ApiError extends Error {

@@ -2,14 +2,11 @@ import { BrowserWindow, shell } from 'electron';
 import { join } from 'node:path';
 // 窗口/任务栏图标与安装包图标同源，都取自 build/icon.png。
 import appIcon from '../../../build/icon.png?asset';
+import { APP_ENTRY, APP_ORIGIN } from '../protocol';
 import { applyRoundedRegion, needsRoundedRegion } from './rounded';
 
-interface CreateMainWindowOptions {
-  bffUrl: string;
-  secret: string;
-}
-
-export function createMainWindow(options: CreateMainWindowOptions): BrowserWindow {
+/** 页面地址固定，不再需要按 dev/release 传 bffUrl 与 secret。 */
+export function createMainWindow(): BrowserWindow {
   const isMac = process.platform === 'darwin';
 
   const window = new BrowserWindow({
@@ -71,8 +68,9 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
   });
 
   window.webContents.on('will-navigate', (event, url) => {
+    // 站内导航（含 hash 路由）留在应用里，外链一律交给系统浏览器。
     const allowed =
-      url.startsWith(options.bffUrl) ||
+      url.startsWith(APP_ORIGIN) ||
       url.startsWith('http://localhost:5173') ||
       url.startsWith('http://127.0.0.1:5173');
     if (!allowed) {
@@ -81,11 +79,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     }
   });
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(process.env.ELECTRON_RENDERER_URL);
-  } else {
-    void window.loadURL(`${options.bffUrl}/?k=${encodeURIComponent(options.secret)}`);
-  }
+  void window.loadURL(APP_ENTRY);
 
   return window;
 }

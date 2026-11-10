@@ -2,6 +2,7 @@ import { BrowserWindow, screen } from 'electron';
 import { join } from 'node:path';
 import type { DesktopConfig, DesktopLyricState } from '@shared/ipc';
 import { saveConfig } from './config/store';
+import { APP_ENTRY } from './protocol';
 
 /**
  * 桌面歌词窗口：无边框透明置顶条。
@@ -17,14 +18,9 @@ const HEIGHT = 200;
 
 let lyricWindow: BrowserWindow | null = null;
 let lastState: DesktopLyricState | null = null;
-let entryUrl: string | null = null;
 
-/** 启动时决定歌词窗口加载哪个地址；dev 走 Vite，打包走 BFF 托管的静态页。 */
-export function initDesktopLyric(options: { bffUrl: string; secret: string }): void {
-  entryUrl = process.env.ELECTRON_RENDERER_URL
-    ? `${process.env.ELECTRON_RENDERER_URL}?window=lyric`
-    : `${options.bffUrl}/?k=${encodeURIComponent(options.secret)}&window=lyric`;
-}
+/** 所有窗口共用固定 origin；副窗口靠 ?window= 决定挂哪个根组件。 */
+const entryUrl = `${APP_ENTRY}?window=lyric`;
 
 export function getLyricState(): DesktopLyricState | null {
   return lastState;
@@ -51,8 +47,6 @@ function defaultPosition(): { x: number; y: number } {
 
 /** 按配置保证歌词窗口「该有就有、该没就没」，并套用锁定（鼠标穿透）状态。 */
 export function syncDesktopLyric(config: DesktopConfig): void {
-  if (!entryUrl) return;
-
   if (!config.desktopLyric) {
     const win = lyricWindow;
     lyricWindow = null;

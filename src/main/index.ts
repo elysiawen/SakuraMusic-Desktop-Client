@@ -7,10 +7,11 @@ import appIcon from '../../build/icon.png?asset';
 import { startBff, type BffHandle } from './bff/server';
 import { cleanupTempFiles } from './cache/index';
 import { getConfig, saveConfig } from './config/store';
-import { closeDesktopLyric, initDesktopLyric, syncDesktopLyric } from './lyric';
+import { closeDesktopLyric, syncDesktopLyric } from './lyric';
 import { installMenu } from './menu';
 import { registerIpc } from './ipc';
 import { closeNowPlayingWindow, initNowPlayingWindow } from './nowPlayingWindow';
+import { registerAppProtocol, registerAppScheme } from './protocol';
 import { createMainWindow } from './windows/main';
 import {
   disposeTaskbarPreview,
@@ -18,6 +19,10 @@ import {
   logTaskbarPreview,
   syncTaskbarPreview,
 } from './windows/taskbarPreview';
+
+// 必须在 app.whenReady() 之前：把 sakura:// 声明成标准、安全、可流式的 scheme，
+// 页面才有固定 origin（dev / release 一致），localStorage 不再随端口漂移。
+registerAppScheme();
 
 // 一起听/房间镜像需要不经过用户手势也能起播。
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -106,7 +111,7 @@ if (!hasLock) {
 
   const openMainWindow = (): void => {
     if (!bff) return;
-    mainWindow = createMainWindow({ bffUrl: bff.url, secret: bff.secret });
+    mainWindow = createMainWindow();
     // 任务栏缩略图预览：仅 Windows 生效，非 Windows 内部直接返回。
     initTaskbarPreview(mainWindow, {
       enabled: getConfig().taskbarPreview,
@@ -141,6 +146,9 @@ if (!hasLock) {
 
   app.whenReady().then(async () => {
     app.setAppUserModelId(APP_ID);
+    // dev 时协议层把静态请求转发给 Vite，生产时直接读 out/renderer；
+    // 页面本身两边都从 sakura://app 加载，不再有 origin / CSP 差异。
+    const devServerUrl = process.env.ELECTRON_RENDERER_URL?.replace(/\/+$/, '') ?? null;
     // 只删上次异常退出留下的 .part/.tmp，不参与窗口创建：放到下一个 tick，
     // 别让封面缓存目录的 readdirSync 挡住冷启动关键路径。
     setImmediate(cleanupTempFiles);
@@ -148,12 +156,7 @@ if (!hasLock) {
     registerIpc({ getMainWindow: () => mainWindow, onConfigChanged: applyConfigChanged });
 
     try {
-      bff = await startBff({
-        // 只有 electron-vite dev 会注入 ELECTRON_RENDERER_URL；其余情况（预览、打包）
-        // 都由 BFF 自己托管 out/renderer，避免“已构建却打开空白页”。
-        dev: Boolean(process.env.ELECTRON_RENDERER_URL),
-        rendererRoot: join(__dirname, '../renderer'),
-      });
+      bff = await startBff({ dev: devServerUrl !== null });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       dialog.showErrorBox(
@@ -167,14 +170,21 @@ if (!hasLock) {
       return;
     }
 
+    // 协议 handler 必须先注册，窗口 loadURL 才会命中。
+    registerAppProtocol({
+      rendererRoot: join(__dirname, '../renderer'),
+      devServerUrl,
+      bffUrl: bff.url,
+      secret: bff.secret,
+    });
+
     openMainWindow();
 
     // 桌面歌词：跟上次开关状态恢复；主窗口收进托盘后歌词继续显示。
-    initDesktopLyric({ bffUrl: bff.url, secret: bff.secret });
     syncDesktopLyric(getConfig());
 
     // 弹出式播放窗口：点封面/弹出按钮时建，全生命周期惰性。
-    initNowPlayingWindow({ bffUrl: bff.url, secret: bff.secret, getMainWindow: () => mainWindow });
+    initNowPlayingWindow({ getMainWindow: () => mainWindow });
 
     app.on('activate', () => {
       // 歌词窗口不算数：Dock 点一下要把主窗口找回来。

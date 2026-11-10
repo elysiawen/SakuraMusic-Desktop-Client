@@ -1,6 +1,7 @@
 import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import type { DesktopConfig } from '@shared/ipc';
+import { ApiError } from '@/api/client';
 import {
   connectApi,
   type CommandAction,
@@ -16,14 +17,24 @@ import { usePlayerStore } from './player';
 /**
  * 多设备在线与遥控。
  *
- * 「在线」= 一条活着的 SSE 长连接（由主进程透传网关）。本机每秒上报一次播放状态，
- * 网关把整份设备列表广播给同账号的其它设备；指令是点对点的 POST，控制端不碰音频。
+ * 「在线」= 一条活着的 SSE 长连接（由主进程透传网关），与状态上报频率无关。
+ * 上报是稀疏的：只在播放/暂停、换歌、队列、模式、音量、跟随关系变化时发，
+ * 以及播放进度偏离推算值太多时补一次；网关把整份设备列表广播给同账号设备。
  *
- * 播放进度由控制端按 `positionAt` + 服务端时间偏移推算，避免两台机器的时钟差
- * 直接把进度条带偏。
+ * 播放进度由控制端按 `positionAt` + 服务端时间偏移推算，所以不需要周期对表；
+ * 这也避免了监听 `currentTime`（每 250ms 变一次）造成的持续小流量。
  */
 
-const REPORT_INTERVAL_MS = 1000;
+/** 上报失败后的重试间隔：只对网络抖动与 5xx 生效，业务错误重试也没用。 */
+const RETRY_DELAYS_MS = [800, 2_400];
+/** 偏差检测的采样间隔：纯本地数值比较，不产生任何请求。 */
+const DRIFT_CHECK_MS = 1_000;
+/** 实际进度与「上次上报位置 + 本地已流逝时间」相差多少秒才算出了事。 */
+const DRIFT_THRESHOLD_S = 1.5;
+/** 两次「因偏差补报」之间的最小间隔，免得卡顿时补得比周期上报还勤。 */
+const DRIFT_COOLDOWN_MS = 5_000;
+/** 音量/静音上报的防抖间隔：拖动一次不变成几十个请求。 */
+const VOLUME_REPORT_DEBOUNCE_MS = 300;
 
 const PLAY_MODES: RemotePlayMode[] = ['order', 'all', 'one', 'shuffle'];
 
@@ -158,8 +169,14 @@ export const useDevicesStore = defineStore('devices', () => {
   const remoteQueues = ref<Record<string, RemoteQueue>>({});
 
   let source: EventSource | null = null;
-  let reportTimer: number | undefined;
-  let stopWatch: (() => void) | null = null;
+  let stopStateWatch: (() => void) | null = null;
+  let stopSeekWatch: (() => void) | null = null;
+  let stopVolumeWatch: (() => void) | null = null;
+  let volumeReportTimer: number | undefined;
+  let driftTimer: number | undefined;
+  /** 上次上报的进度基准：位置 + 本地单调时刻（系统校时不会让挂钟跳变）。 */
+  let baseline: { position: number; at: number } | null = null;
+  let lastDriftReportAt = -Infinity;
   /** 每台设备上一次「要队列」的时刻，用来给反复开合的面板去重。 */
   const queueAskedAt = new Map<string, number>();
   /** 已收到过几次对端的 `transfer`（回程），「接管」等的是它。 */
@@ -210,21 +227,83 @@ export const useDevicesStore = defineStore('devices', () => {
     };
   }
 
-  async function flush(): Promise<void> {
+  /**
+   * 把本机播放状态报给网关，由它广播给同账号的其它设备。
+   *
+   * 这是唯一的上行通道、没有周期对表兜底，所以失败必须重试：
+   * 丢一次会一直错到用户再操作一次。4xx 是请求本身的问题，重试没用。
+   */
+  async function report(attempt = 0): Promise<void> {
     if (!connected.value || !selfId.value) return;
     try {
       await connectApi.reportState(selfId.value, snapshot());
-    } catch {
-      // 断线期间上报失败很正常，重连后会补一份完整状态。
+    } catch (error) {
+      if (error instanceof ApiError && error.status < 500) return;
+      if (attempt >= RETRY_DELAYS_MS.length) return;
+      await new Promise<void>((done) =>
+        window.setTimeout(done, RETRY_DELAYS_MS[attempt] ?? 2_400),
+      );
+      return report(attempt + 1);
     }
+    // 上报成功即刷新基准：控制端看到的正是「这个位置 + 服务端盖的这个时刻」。
+    baseline = { position: player.currentTime, at: performance.now() };
   }
 
-  function scheduleReport(): void {
-    if (!connected.value || reportTimer !== undefined) return;
-    reportTimer = window.setTimeout(() => {
-      reportTimer = undefined;
-      void flush();
-    }, REPORT_INTERVAL_MS);
+  /**
+   * 偏差检测：把「实际进度」与「上次上报位置 + 本地已流逝时间」比一比。
+   * 兜的是主 watch 看不见的两类情况：播放中拖进度条、音频缓冲卡顿。
+   * 全是本地计算，正常情况下一个字节都不发。
+   */
+  function checkDrift(): void {
+    if (!baseline || !player.playing) return;
+    const now = performance.now();
+    const expected = baseline.position + (now - baseline.at) / 1000;
+    if (Math.abs(player.currentTime - expected) < DRIFT_THRESHOLD_S) return;
+    // 卡顿时偏差会一直存在，冷却期内不重复补报。
+    if (now - lastDriftReportAt < DRIFT_COOLDOWN_MS) return;
+    lastDriftReportAt = now;
+    void report();
+  }
+
+  function startReporting(): void {
+    if (stopStateWatch) return;
+
+    // 主路径：播放/暂停、换歌、队列长度、模式、跟随关系一变就立刻上报。
+    // 刻意不监听 currentTime——它每 250ms 变一次，会让上报变成持续的小流量。
+    stopStateWatch = watch(
+      () =>
+        [
+          player.playing,
+          player.current?.key ?? '',
+          player.index,
+          player.queue.length,
+          player.mode,
+          following.value ?? '',
+        ].join('|'),
+      () => void report(),
+    );
+
+    // 暂停状态下拖进度条：主 watch 看不见 currentTime，偏差检测又只在播放中跑。
+    stopSeekWatch = watch(
+      () => player.currentTime,
+      () => {
+        if (!player.playing) void report();
+      },
+    );
+
+    // 音量/静音拖动很频繁，单独防抖，别混进「立刻上报」的那一路。
+    stopVolumeWatch = watch(
+      () => [player.volume, player.muted].join('|'),
+      () => {
+        if (volumeReportTimer !== undefined) window.clearTimeout(volumeReportTimer);
+        volumeReportTimer = window.setTimeout(() => {
+          volumeReportTimer = undefined;
+          void report();
+        }, VOLUME_REPORT_DEBOUNCE_MS);
+      },
+    );
+
+    if (driftTimer === undefined) driftTimer = window.setInterval(checkDrift, DRIFT_CHECK_MS);
   }
 
   /** 把某台设备上报的进度推算到「现在」，已校正时钟差。 */
@@ -271,7 +350,7 @@ export const useDevicesStore = defineStore('devices', () => {
     applyDevices(data);
     connected.value = true;
     error.value = '';
-    void flush();
+    void report();
     // 房间 store 靠这一帧知道「连接回来了」，好重新对账自己还在不在房间里。
     emitRoomEvent('hello', data);
     void syncToLeader();
@@ -481,11 +560,9 @@ export const useDevicesStore = defineStore('devices', () => {
         break;
     }
 
-    /*
-     * 立刻补报：控制端正是靠「这台设备的 positionAt 变了」来确认指令真的被执行了。
-     * 走 1 秒的防抖上报会让每次点击都慢一拍才知道结果。
-     */
-    void flush();
+    // 立刻补报：控制端靠「这台设备的 positionAt 变了」确认指令真的被执行了，
+    // 不能等下一次状态变化才广播。
+    void report();
   }
 
   // ---- 跟随播放 ----
@@ -739,32 +816,28 @@ export const useDevicesStore = defineStore('devices', () => {
       error.value = '设备连接已断开，正在重连…';
     };
 
-    if (!stopWatch) {
-      stopWatch = watch(
-        () => [
-          player.current?.key,
-          player.playing,
-          player.volume,
-          player.muted,
-          player.quality,
-          player.mode,
-          player.currentTime,
-          following.value,
-        ],
-        () => scheduleReport(),
-      );
-    }
+    startReporting();
   }
 
   function disconnect(): void {
     source?.close();
     source = null;
-    stopWatch?.();
-    stopWatch = null;
-    if (reportTimer !== undefined) {
-      window.clearTimeout(reportTimer);
-      reportTimer = undefined;
+    stopStateWatch?.();
+    stopStateWatch = null;
+    stopSeekWatch?.();
+    stopSeekWatch = null;
+    stopVolumeWatch?.();
+    stopVolumeWatch = null;
+    if (volumeReportTimer !== undefined) {
+      window.clearTimeout(volumeReportTimer);
+      volumeReportTimer = undefined;
     }
+    if (driftTimer !== undefined) {
+      window.clearInterval(driftTimer);
+      driftTimer = undefined;
+    }
+    baseline = null;
+    lastDriftReportAt = -Infinity;
     stopFollowWatch();
     following.value = null;
     leaderMissingSince = null;
@@ -861,7 +934,8 @@ export const useDevicesStore = defineStore('devices', () => {
     connect,
     disconnect,
     reconnect,
-    flush,
+    /** 手动补报一次本机状态（正常情况由内部的稀疏上报覆盖）。 */
+    report,
     /** 只发指令、不等回执（返回是否送达）。 */
     send,
     control,

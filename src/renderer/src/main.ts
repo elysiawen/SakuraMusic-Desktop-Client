@@ -6,12 +6,10 @@ import NowPlayingWindow from './nowPlaying/NowPlayingWindow.vue';
 import { router } from './router';
 import { useThemeStore } from './stores/theme';
 import { finishBootWhenReady, hideBootSplash } from './utils/bootSplash';
-import { initRendererState } from './utils/stateSync';
 import './styles/index.css';
 
-// 必须在任何 store 读 localStorage 之前：正式版每次端口随机，
-// 得先把主进程保存的状态快照注入到当前 origin。
-initRendererState();
+// 页面 origin 固定为 sakura://app，localStorage 由浏览器原生持久化，
+// 不需要启动注入，也不需要在主进程里做状态镜像。
 
 // 桌面歌词窗口用同一个入口：`?window=lyric` 时只挂歌词视图，不加载整个应用。
 if (new URLSearchParams(window.location.search).get('window') === 'lyric') {
