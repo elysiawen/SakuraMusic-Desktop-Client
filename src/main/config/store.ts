@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { app } from 'electron';
-import type { DesktopConfig } from '@shared/ipc';
+import type { DesktopConfig, WindowBounds } from '@shared/ipc';
 import { normalizeBaseUrl } from './url';
 
 /**
@@ -46,6 +46,9 @@ function defaultConfig(): DesktopConfig {
     lyricShowTrans: true,
     lyricX: null,
     lyricY: null,
+    mainWindowBounds: null,
+    mainWindowMaximized: false,
+    nowPlayingBounds: null,
     taskbarPreview: true,
   };
 }
@@ -90,6 +93,18 @@ function sanitize(input: Partial<DesktopConfig> | null | undefined): DesktopConf
     const num = Number(value);
     return Number.isFinite(num) ? Math.round(num) : null;
   };
+  const bounds = (value: unknown): WindowBounds | null => {
+    // 配置可能被手改/损坏：只接受能还原出正常窗口的整数几何，
+    // 否则退回默认尺寸（屏幕收敛在创建窗口时做）。
+    if (!value || typeof value !== 'object') return null;
+    const raw = value as Partial<WindowBounds>;
+    const nums = [raw.x, raw.y, raw.width, raw.height];
+    if (!nums.every((v): v is number => typeof v === 'number' && Number.isFinite(v))) return null;
+    const [x, y, width, height] = nums as number[];
+    if (width < 320 || height < 240 || width > 20000 || height > 20000) return null;
+    if (Math.abs(x) > 100000 || Math.abs(y) > 100000) return null;
+    return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+  };
 
   return {
     baseUrl,
@@ -111,6 +126,9 @@ function sanitize(input: Partial<DesktopConfig> | null | undefined): DesktopConf
     lyricShowTrans: raw.lyricShowTrans !== false,
     lyricX: position(raw.lyricX),
     lyricY: position(raw.lyricY),
+    mainWindowBounds: bounds(raw.mainWindowBounds),
+    mainWindowMaximized: raw.mainWindowMaximized === true,
+    nowPlayingBounds: bounds(raw.nowPlayingBounds),
     // 缺省为开：老配置文件里没这个字段时也要默认启用。
     taskbarPreview: raw.taskbarPreview !== false,
   };

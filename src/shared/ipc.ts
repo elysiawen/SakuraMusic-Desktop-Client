@@ -6,6 +6,14 @@
 
 import type { CacheKind, CacheStats } from './cache';
 
+/** 窗口普通状态下的位置与尺寸（DIP）；null 表示还没记录过。 */
+export interface WindowBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface DesktopConfig {
   /** 网关根地址，形如 `http://127.0.0.1:8787`；首次启动为空。 */
   baseUrl: string;
@@ -40,6 +48,12 @@ export interface DesktopConfig {
   /** 歌词窗口位置；null 表示用默认（底部居中）。 */
   lyricX: number | null;
   lyricY: number | null;
+  /** 主窗口上次的位置与尺寸；null 表示用默认（1440×900 居中）。 */
+  mainWindowBounds: WindowBounds | null;
+  /** 上次退出时主窗口是否最大化。 */
+  mainWindowMaximized: boolean;
+  /** 弹出式播放窗口上次的位置与尺寸；null 表示用默认（1280×800 居中）。 */
+  nowPlayingBounds: WindowBounds | null;
   /** Windows 任务栏预览：自绘封面卡片 + 缩略图控制按钮。其它平台忽略。 */
   taskbarPreview: boolean;
 }
@@ -92,7 +106,10 @@ export interface SaveServerInput {
   allowInvalidCert: boolean;
 }
 
-/** 桌面偏好的可改字段；服务器地址走 `saveServer`，不在这里。 */
+/**
+ * 桌面偏好的可改字段；服务器地址走 `saveServer`，不在这里。
+ * 窗口几何由主进程自己记录，不开放给渲染端。
+ */
 export interface DesktopConfigPatch {
   deviceName?: string;
   closeToTray?: boolean;

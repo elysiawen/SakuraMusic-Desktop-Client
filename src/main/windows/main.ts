@@ -3,15 +3,24 @@ import { join } from 'node:path';
 // 窗口/任务栏图标与安装包图标同源，都取自 build/icon.png。
 import appIcon from '../../../build/icon.png?asset';
 import { APP_ENTRY, APP_ORIGIN } from '../protocol';
+import { getConfig } from '../config/store';
+import { restoreWindowBounds, trackWindowBounds } from './bounds';
 import { applyRoundedRegion, needsRoundedRegion } from './rounded';
 
 /** 页面地址固定，不再需要按 dev/release 传 bffUrl 与 secret。 */
 export function createMainWindow(): BrowserWindow {
   const isMac = process.platform === 'darwin';
+  const bounds = restoreWindowBounds({
+    key: 'mainWindowBounds',
+    minWidth: 1080,
+    minHeight: 700,
+    defaultWidth: 1440,
+    defaultHeight: 900,
+  });
+  const restoreMaximized = getConfig().mainWindowMaximized;
 
   const window = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    ...bounds,
     minWidth: 1080,
     minHeight: 700,
     show: false,
@@ -47,7 +56,11 @@ export function createMainWindow(): BrowserWindow {
     },
   });
 
+  trackWindowBounds(window, 'mainWindowBounds', { trackMaximized: true });
+
   window.once('ready-to-show', () => {
+    // 先还原最大化再 show，避免闪一帧普通尺寸。
+    if (restoreMaximized) window.maximize();
     window.show();
   });
 

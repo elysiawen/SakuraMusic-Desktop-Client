@@ -3,6 +3,7 @@ import { join } from 'node:path';
 // 与主窗口同源的任务栏/窗口图标。
 import appIcon from '../../build/icon.png?asset';
 import { APP_ENTRY, APP_ORIGIN } from './protocol';
+import { restoreWindowBounds, trackWindowBounds } from './windows/bounds';
 import { applyRoundedRegion, needsRoundedRegion } from './windows/rounded';
 
 interface InitNowPlayingWindowOptions {
@@ -60,9 +61,15 @@ export function openNowPlayingWindow(dark = false): void {
   }
 
   const isMac = process.platform === 'darwin';
+  const bounds = restoreWindowBounds({
+    key: 'nowPlayingBounds',
+    minWidth: 960,
+    minHeight: 600,
+    defaultWidth: 1280,
+    defaultHeight: 800,
+  });
   const window = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    ...bounds,
     minWidth: 960,
     minHeight: 600,
     show: false,
@@ -92,6 +99,7 @@ export function openNowPlayingWindow(dark = false): void {
     },
   });
   npWindow = window;
+  trackWindowBounds(window, 'nowPlayingBounds');
 
   window.once('ready-to-show', () => {
     window.show();
