@@ -75,7 +75,7 @@ Sakura Music 的桌面客户端 —— Windows / macOS / Linux。
 | `response_cache` | 带 TTL 的歌曲详情 JSON 响应，供断网回退。 |
 | `media_cache` | 仅音频 / 封面元数据：完整长度、MIME、字节数、最近访问时间。 |
 
-**媒体文件与歌词内容一律不入库。** 歌词按曲目缓存为 `sakura-cache/lyric/*.json` 的 JSON 响应文本，文件 mtime 即保存时间，按设置里的保留天数判断新鲜度，过期后仍留作断网回退。音频前缀、封面图与已下载曲目仍以文件形式留在磁盘（`sakura-cache/audio/*.audio`、`sakura-cache/cover/*.img` 与用户选择的下载目录），仍由本地 BFF 通过 HTTP Range 流式返回。音频 / 封面的用量统计与 LRU 淘汰走 SQL；下载依旧先写 `.part` 文件，成功后才改名。
+**媒体文件与歌词内容一律不入库。** 歌词按曲目缓存为 `sakura-cache/lyric/*.json` 的 JSON 响应文本，文件 mtime 即保存时间，按设置里的保留天数判断新鲜度，过期后仍留作断网回退。整首缓存的音频、封面图与已下载曲目仍以文件形式留在磁盘（`sakura-cache/audio/*.audio`、`sakura-cache/cover/*.img` 与用户选择的下载目录），仍由本地 BFF 通过 HTTP Range 流式返回。音频 / 封面的用量统计与 LRU 淘汰走 SQL；下载依旧先写 `.part` 文件，成功后才改名。
 
 项目尚未发布，代码中没有旧版 JSON 的导入或清理逻辑。要重置到干净状态，删除 `sakura.db`（或整个 `userData` 目录）即可；歌词缓存位于 `sakura-cache/lyric`，可在设置页清理歌词缓存。
 

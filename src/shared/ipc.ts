@@ -216,7 +216,7 @@ export interface WindowControlsApi {
   onMaximizedChange: (callback: (maximized: boolean) => void) => () => void;
 }
 
-export type AudioCacheState = 'full' | 'partial' | null;
+export type AudioCacheState = 'full' | null;
 
 export interface CacheApi {
   /** 读取四类缓存的占用与条目数。 */

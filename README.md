@@ -75,7 +75,7 @@ Main-process metadata lives in a single SQLite database, `sakura.db`, under Elec
 | `response_cache` | Detail JSON responses with TTLs, kept for offline fallback. |
 | `media_cache` | Audio / cover metadata only: total length, MIME type, bytes and last-accessed time. |
 
-**Media files and lyric content are never stored in the database.** Lyrics are cached as one JSON response per track in `sakura-cache/lyric/*.json` (the file's mtime is its save time), with a configurable freshness window and a stale copy for offline fallback. Audio prefixes, cover images and downloaded tracks remain on disk (`sakura-cache/audio/*.audio`, `sakura-cache/cover/*.img`, and the chosen download folder) and are still served by the local BFF over HTTP Range. Audio / cover size reporting and LRU eviction run on SQL; downloads still write a `.part` file first and are renamed only on success.
+**Media files and lyric content are never stored in the database.** Lyrics are cached as one JSON response per track in `sakura-cache/lyric/*.json` (the file's mtime is its save time), with a configurable freshness window and a stale copy for offline fallback. Fully cached audio, cover images and downloaded tracks remain on disk (`sakura-cache/audio/*.audio`, `sakura-cache/cover/*.img`, and the chosen download folder) and are still served by the local BFF over HTTP Range. Audio / cover size reporting and LRU eviction run on SQL; downloads still write a `.part` file first and are renamed only on success.
 
 The app has not been released, so there is no import or cleanup for pre-release JSON files. To reset to a clean state, delete `sakura.db` (or the whole `userData` directory); lyric caches live in `sakura-cache/lyric` and are removed by clearing the lyric cache in Settings.
 

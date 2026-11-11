@@ -20,7 +20,7 @@ import { clearMedia, deleteMedia, mediaUsage, oldestMedia } from '../db/media';
  *   - audio / cover：total / mime / bytes / accessed_at 等元数据
  * 歌词内容与媒体文件都不入库，以文件形式留在 userData 下的 `sakura-cache`：
  *   - lyric/<hash>.json：歌词响应文本，mtime 即保存时间
- *   - audio/<hash>.audio、cover/<hash>.img：音频前缀与封面
+ *   - audio/<hash>.audio、cover/<hash>.img：整首缓存与封面
  * 音频/封面的统计与 LRU 查表；歌词按文件直接读取，统计时扫一次 lyric 目录。
  */
 

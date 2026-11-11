@@ -307,7 +307,7 @@ function pipeAudio(
     stream.on('data', (chunk: Buffer) => writer.write(chunk));
     stream.once('end', () => {
       ended = true;
-      writer.finish(info?.total ?? null, info?.mime ?? 'audio/mpeg');
+      writer.finish();
     });
     stream.once('error', () => writer.abort());
   }

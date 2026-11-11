@@ -200,8 +200,8 @@ export const usePlayerStore = defineStore('player', () => {
   const usingDirect = ref(false);
   /** 当前这一首用的是不是一起听里对方提供的会员地址。 */
   const usingShared = ref(false);
-  /** 当前这一首的本地音频缓存状态：null = 没缓存，'partial' = 前缀，'full' = 完整。 */
-  const audioCache = ref<'full' | 'partial' | null>(null);
+  /** 当前这一首的本地缓存状态：只有整首缓存才算命中，否则是纯拉流。 */
+  const audioCache = ref<'full' | null>(null);
 
   /**
    * loading 的保险丝：不管哪个分支把它点亮，10s 内没等到 playing / pause / error
@@ -482,6 +482,20 @@ export const usePlayerStore = defineStore('player', () => {
       if (repeat.value === 'one') {
         element.currentTime = 0;
         void element.play();
+        return;
+      }
+      /*
+       * 上游续传被 200 全量 / 416 / 错误体打断时，浏览器会在数据真正播完前
+       * 误报 ended。时长可信且明显没走完就别切歌，停住并提示，避免莫名跳下一首。
+       */
+      if (
+        Number.isFinite(element.duration) &&
+        element.duration > 0 &&
+        element.currentTime + 1.5 < element.duration
+      ) {
+        playing.value = false;
+        loading.value = false;
+        toast.error('音频未完整加载，已停止播放');
         return;
       }
       void next(true);
@@ -904,9 +918,15 @@ export const usePlayerStore = defineStore('player', () => {
     const api = (window as { sakura?: { cache?: { audioCheck?: (k: string) => Promise<AudioCacheState> } } })
       .sakura;
     if (!api?.cache?.audioCheck) return;
-    void api.cache.audioCheck(key).then((state) => {
-      if (token === loadToken) audioCache.value = state;
-    });
+    void api.cache
+      .audioCheck(key)
+      .then((state) => {
+        if (token === loadToken) audioCache.value = state;
+      })
+      .catch(() => {
+        // 查询失败按「无缓存」处理即可，别把未处理的 rejection 留在控制台。
+        if (token === loadToken) audioCache.value = null;
+      });
   }
 
   async function playTrack(track: UnifiedTrack, list?: UnifiedTrack[]): Promise<void> {

@@ -41,7 +41,7 @@ export interface NowPlayingSnapshot {
   actualQuality: Quality | null;
   usingDirect: boolean;
   usingShared: boolean;
-  audioCache: 'full' | 'partial' | null;
+  audioCache: 'full' | null;
   /** 当前播放页样式 id，弹出窗口内换样式要同步回主窗口。 */
   nowPlayingMode: string;
   /** 一起听房间：徽标与悬浮窗（两人对置、本次/累计时长）都从这份镜像取。 */
