@@ -1,5 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
+import { Readable } from 'node:stream';
 import { net, protocol } from 'electron';
 
 /**
@@ -95,7 +97,14 @@ function isBffPath(pathname: string): boolean {
   return BFF_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
-/** API / 封面 / 音频 Range / SSE：流式透传，不缓冲、不落地。 */
+/**
+ * API / 封面 / 音频 Range / SSE：流式透传，不缓冲、不落地。
+ *
+ * 用主进程的 node:http 直连本机 BFF，而不是 net.fetch：后者走 Chromium 网络栈，
+ * 同一个 127.0.0.1 origin 只有 6 条连接。快速切歌时页面 abort 只取消「页面 →
+ * 协议层」这一跳，协议层请求的 signal 实测并不会触发，于是废弃的 resolve 把
+ * 连接占满，用户最后点的那首要排队等它们超时才轮到。
+ */
 async function forwardToBff(
   request: Request,
   options: AppProtocolOptions,
@@ -106,10 +115,43 @@ async function forwardToBff(
   // JSON 请求体很小，读成字符串再发，省掉 ReadableStream duplex 的兼容问题。
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
   const body = hasBody ? await request.text() : undefined;
-  return net.fetch(options.bffUrl + pathAndQuery, {
-    method: request.method,
-    headers,
-    body,
+  const target = new URL(options.bffUrl);
+
+  return new Promise<Response>((resolve, reject) => {
+    const req = httpRequest(
+      {
+        hostname: target.hostname,
+        port: Number(target.port),
+        path: pathAndQuery,
+        method: request.method,
+        headers: {
+          ...headers,
+          ...(body !== undefined
+            ? { 'content-length': String(Buffer.byteLength(body, 'utf8')) }
+            : {}),
+        },
+      },
+      (res) => {
+        const responseHeaders = new Headers();
+        for (const [key, value] of Object.entries(res.headers)) {
+          if (Array.isArray(value)) value.forEach((item) => responseHeaders.append(key, item));
+          else if (value !== undefined) responseHeaders.set(key, value);
+        }
+        // hop-by-hop 头不能塞进 Web Response，长度由它按 body 自己算。
+        responseHeaders.delete('transfer-encoding');
+        responseHeaders.delete('connection');
+        responseHeaders.delete('keep-alive');
+        resolve(
+          new Response(Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>, {
+            status: res.statusCode ?? 502,
+            headers: responseHeaders,
+          }),
+        );
+      },
+    );
+    req.on('error', reject);
+    if (body) req.write(body, 'utf8');
+    req.end();
   });
 }
 

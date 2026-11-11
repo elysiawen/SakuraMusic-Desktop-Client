@@ -60,6 +60,11 @@ const MAX_PERSISTED_QUEUE = 200;
 const RADIO_REFILL_AHEAD = 0;
 /** 续播失败后的冷却：别让 timeupdate 每 250ms 就重试一次，把上游打进风控。 */
 const RADIO_RETRY_MS = 20_000;
+/**
+ * loading 的保险丝：快速切歌时旧的 waiting / error 事件可能把它点亮后没人再清。
+ * 超过这个时间就强制收掉，保证播放键不会一直转圈。
+ */
+const LOADING_WATCHDOG_MS = 10_000;
 
 export const PLAY_QUALITIES = QUALITY_ORDER;
 
@@ -130,6 +135,8 @@ export const usePlayerStore = defineStore('player', () => {
   let pendingSeek = 0;
   let resolvingSource = false;
   let loadToken = 0;
+  /** 上一轮还在路上的地址解析；切歌时直接掐掉，别留一串会被中途打断的在途流。 */
+  let resolveAbort: AbortController | null = null;
   let loadedKey: string | null = null;
   let directFallback: string | null = null;
   let persistTimer: number | undefined;
@@ -195,6 +202,27 @@ export const usePlayerStore = defineStore('player', () => {
   const usingShared = ref(false);
   /** 当前这一首的本地音频缓存状态：null = 没缓存，'partial' = 前缀，'full' = 完整。 */
   const audioCache = ref<'full' | 'partial' | null>(null);
+
+  /**
+   * loading 的保险丝：不管哪个分支把它点亮，10s 内没等到 playing / pause / error
+   * 就强制收掉。跨窗口镜像也直接写这个 ref，所以兜底放在 watch 里最稳妥。
+   */
+  let loadingWatchdog: number | undefined;
+  watch(
+    loading,
+    (active) => {
+      if (loadingWatchdog !== undefined) {
+        window.clearTimeout(loadingWatchdog);
+        loadingWatchdog = undefined;
+      }
+      if (!active) return;
+      loadingWatchdog = window.setTimeout(() => {
+        loadingWatchdog = undefined;
+        loading.value = false;
+      }, LOADING_WATCHDOG_MS);
+    },
+    { flush: 'sync' },
+  );
 
   const current = computed<UnifiedTrack | null>(() => queue.value[index.value] ?? null);
   const activeSource = computed<TrackSource | null>(() =>
@@ -406,6 +434,8 @@ export const usePlayerStore = defineStore('player', () => {
       // 电台续播按「队列还剩几首」判断，与音频进度无关，解析新地址期间也照常检查。
       maybeRefill();
       if (resolvingSource) return;
+      // playing 事件在某些缓冲恢复路径上可能不来；进度在走就说明确实在播。
+      if (!element.paused && !playing.value) playing.value = true;
       currentTime.value = element.currentTime;
       persistSoon();
       updatePositionState();
@@ -417,17 +447,17 @@ export const usePlayerStore = defineStore('player', () => {
     element.addEventListener('durationchange', () => {
       if (Number.isFinite(element.duration) && element.duration > 0) duration.value = element.duration;
     });
-    element.addEventListener('play', () => {
-      playing.value = true;
-    });
     element.addEventListener('pause', () => {
       playing.value = false;
-      loading.value = false;
+      // 切歌时主动 pause 旧音频不算用户暂停，解析期间要继续保持加载态。
+      if (!resolvingSource) loading.value = false;
     });
     element.addEventListener('waiting', () => {
       loading.value = true;
     });
     element.addEventListener('playing', () => {
+      // 真正出声才置 playing：缓冲期间别让播放键显示成「暂停」。
+      playing.value = true;
       loading.value = false;
     });
     element.addEventListener('ended', () => {
@@ -470,9 +500,7 @@ export const usePlayerStore = defineStore('player', () => {
         error.value = '';
         element.src = fallback;
         element.load();
-        void element.play().catch(() => {
-          loading.value = false;
-        });
+        settleLoading(element.play());
         toast.info('共享的会员地址不可用，已改用本机账号播放');
         return;
       }
@@ -488,9 +516,7 @@ export const usePlayerStore = defineStore('player', () => {
         error.value = '';
         element.src = fallback;
         element.load();
-        void element.play().catch(() => {
-          loading.value = false;
-        });
+        settleLoading(element.play());
         toast.info('该平台无法直连，已自动切换为网关中转');
         return;
       }
@@ -668,6 +694,32 @@ export const usePlayerStore = defineStore('player', () => {
     { immediate: true },
   );
 
+  /**
+   * 起播不等待 play() 收敛。桌面端的 src 是 /media/<id>，缓冲、切歌打断时那个
+   * Promise 可能长期 pending，把 start() 的 finally 一起挂住，loading 就再没人清。
+   * playing / pause 交给媒体事件，错误在这里单独收口。
+   */
+  function beginPlayback(element: HTMLAudioElement, token: number): void {
+    void element.play().catch((caught: unknown) => {
+      // 被新的一轮取代、或被切歌打断（AbortError）都不是错误。
+      if (token !== loadToken) return;
+      if (caught instanceof DOMException && caught.name === 'AbortError') return;
+      const message = caught instanceof Error ? caught.message : '播放失败';
+      error.value = message;
+      playing.value = false;
+      loading.value = false;
+      toast.error(message);
+    });
+  }
+
+  /** play() 收敛后无条件收掉这一轮的 loading：成功、失败、被打断都算。 */
+  function settleLoading(pending: Promise<void>): void {
+    const done = (): void => {
+      loading.value = false;
+    };
+    void pending.then(done, done);
+  }
+
   async function start(): Promise<void> {
     const track = current.value;
     if (!track) return;
@@ -676,8 +728,15 @@ export const usePlayerStore = defineStore('player', () => {
     if (!source) {
       error.value = '该歌曲没有可用的音源';
       toast.error(error.value);
+      loading.value = false;
       return;
     }
+
+    // 新一轮起播先掐掉上一轮还在路上的地址解析：连点时旧响应回来也只能被丢弃，
+    // 却在 BFF / CDN 侧多留一串会被中途打断的流。
+    resolveAbort?.abort();
+    const controller = new AbortController();
+    resolveAbort = controller;
 
     loading.value = true;
     error.value = '';
@@ -687,6 +746,13 @@ export const usePlayerStore = defineStore('player', () => {
     audioCache.value = null; // 重置缓存态，等 BFF resolve 完再查
     sharedFallback = null;
     resolvingSource = true;
+    /*
+     * 解析新地址期间先停掉上一首。否则歌名、进度已经指向新歌，耳朵里还在放旧歌，
+     * 进度又被 resolvingSource 冻住，看起来就是「点错了 / 卡住了」。
+     */
+    const previous = ensureAudio();
+    if (!previous.paused) previous.pause();
+    playing.value = false;
     const token = ++loadToken;
     let srcSwapped = false;
 
@@ -721,8 +787,7 @@ export const usePlayerStore = defineStore('player', () => {
         void loadLyric(source);
         updateMediaSession(track);
 
-        await element.play();
-        playing.value = true;
+        beginPlayback(element, token);
         return;
       }
 
@@ -733,7 +798,7 @@ export const usePlayerStore = defineStore('player', () => {
        */
       const shared = sharedSourceProvider?.(source.platform, track.key) ?? null;
       const resolved = await musicApi
-        .resolvePlay(source.platform, source.id, quality.value)
+        .resolvePlay(source.platform, source.id, quality.value, controller.signal)
         .catch((cause: unknown) => {
           if (shared) return null;
           throw cause;
@@ -767,8 +832,7 @@ export const usePlayerStore = defineStore('player', () => {
         void loadLyric(source);
         updateMediaSession(track);
 
-        await element.play();
-        playing.value = true;
+        beginPlayback(element, token);
 
         if (shared.trial) toast.info('共享的会员也拿不到完整音源，只能试听');
         return;
@@ -807,8 +871,7 @@ export const usePlayerStore = defineStore('player', () => {
       void loadLyric(source);
       updateMediaSession(track);
 
-      await element.play();
-      playing.value = true;
+      beginPlayback(element, token);
 
       if (resolved.trial) {
         toast.info('该曲目仅能获取试听片段（受版权或会员限制）');
@@ -821,6 +884,7 @@ export const usePlayerStore = defineStore('player', () => {
       else revertToLoaded();
       toast.error(message);
     } finally {
+      if (resolveAbort === controller) resolveAbort = null;
       if (token === loadToken) {
         loading.value = false;
         resolvingSource = false;
@@ -1146,6 +1210,10 @@ export const usePlayerStore = defineStore('player', () => {
 
   function clearQueue(): void {
     stopRadio();
+    // 作废还在路上的加载，别让它回来又把刚清空的现场播上。
+    loadToken += 1;
+    resolveAbort?.abort();
+    resolveAbort = null;
     const element = ensureAudio();
     element.pause();
     element.removeAttribute('src');

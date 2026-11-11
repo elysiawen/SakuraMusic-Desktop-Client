@@ -70,9 +70,10 @@ export const musicApi = {
    * 主进程 BFF 会把响应里的 `direct` 换成同源的 `/media/<id>`，并额外返回
    * `media.proxy`；渲染进程只使用 `media`，不接触 CDN 地址与防盗链请求头。
    */
-  resolvePlay: (platform: Platform, id: string, quality: Quality) =>
+  resolvePlay: (platform: Platform, id: string, quality: Quality, signal?: AbortSignal) =>
     apiRequest<PlayResolveResult>('/api/play/resolve', {
       method: 'POST',
       body: { platform, id, quality },
+      signal,
     }),
 };
