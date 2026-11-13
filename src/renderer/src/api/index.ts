@@ -54,6 +54,8 @@ export const musicApi = {
   toplists: (platform: Platform) =>
     apiRequest<{ items: PlaylistSummary[] }>('/api/toplists', { query: { platform } }),
 
+  // 集合详情是分页接口（默认 100、单页上限 200）：CollectionView 首屏只取第一页，
+  // 滚动到底再按 page 取下一页，直到不足一整页；别在详情页一进页面就取全。
   toplist: (platform: Platform, id: string, page = 1, limit = 100) =>
     apiRequest<CollectionDetail>(`/api/toplist/${platform}/${encodeURIComponent(id)}`, {
       query: { page, limit },
