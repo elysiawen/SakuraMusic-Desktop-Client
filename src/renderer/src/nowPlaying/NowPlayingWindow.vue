@@ -15,10 +15,26 @@ initNowPlayingRemote();
 
 /** 夜色场景的样式（雾笺/绘光/沉浸）：窗口底色也用深色，首帧前不闪白 */
 const stageDark = computed(() => nowPlayingModeDef(ui.nowPlayingMode).stageTone === 'dark');
+
+/**
+ * 弹出窗口里的歌手/专辑链接：本窗口没有详情页，也不该因此关掉自己。
+ * 在捕获阶段截下站内路由链接，原样交给主窗口（主进程会把它叫出来并导航）。
+ * 封面按钮、Esc、收起按钮不是 `a[href^="#/"]`，照旧走 closeLyrics 关窗。
+ */
+function onRootClick(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null;
+  const link = target?.closest<HTMLAnchorElement>('a[href^="#/"]');
+  if (!link) return;
+  const href = link.getAttribute('href');
+  if (!href) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  window.sakura.nowPlaying.sendCommand({ type: 'navigate', path: href.slice(1) });
+}
 </script>
 
 <template>
-  <div class="npwin" :class="{ 'npwin--dark': stageDark }">
+  <div class="npwin" :class="{ 'npwin--dark': stageDark }" @click.capture="onRootClick">
     <Transition name="mode-switch">
       <div :key="ui.nowPlayingMode" class="npwin-item">
         <component :is="nowPlayingModeDef(ui.nowPlayingMode).component" />

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import SakuraPetals from '@/components/common/SakuraPetals.vue';
 import AppSidebar from '@/components/layout/AppSidebar.vue';
@@ -28,6 +28,38 @@ const room = useRoomStore();
 const ui = useUiStore();
 const route = useRoute();
 const router = useRouter();
+
+/**
+ * 所有页面共用 .app-content 这一个滚动容器，RouterView 只是它的子节点。
+ * 切路由时容器 DOM 不变，scrollTop 会被下一页原样继承：A 页滚到中段，
+ * B 页打开就是中段；B 页滚到顶，返回 A 也跟着到顶。
+ * 所以按 fullPath 各记一份：离开时存，回来时恢复，没去过的从顶部开始。
+ */
+const contentRef = ref<HTMLElement | null>(null);
+const scrollPositions = new Map<string, number>();
+
+function restoreScroll(path: string): void {
+  const target = scrollPositions.get(path) ?? 0;
+  const element = contentRef.value;
+  if (!element) return;
+  element.scrollTop = target;
+  // 页面数据晚到时内容才撑开，第一次赋值可能被浏览器夹回去，补一次。
+  if (target <= 0 || element.scrollTop >= target) return;
+  window.setTimeout(() => {
+    if (route.fullPath === path && contentRef.value) contentRef.value.scrollTop = target;
+  }, 200);
+}
+
+watch(
+  () => route.fullPath,
+  (to, from) => {
+    const element = contentRef.value;
+    if (!element) return;
+    // 回调触发时 DOM 还是旧页面，scrollTop 正好是它的位置。
+    if (from) scrollPositions.set(from, element.scrollTop);
+    void nextTick(() => restoreScroll(to));
+  },
+);
 
 /** 雾笺/绘光整页是夜色场景：播放页底色跟着用深色，浅色主题下切换时才不会透出白 */
 const stageDark = computed(() => nowPlayingModeDef(ui.nowPlayingMode).stageTone === 'dark');
@@ -157,7 +189,7 @@ onBeforeUnmount(() => {
 
       <div class="app-main">
         <TitleBar />
-        <main class="app-content">
+        <main ref="contentRef" class="app-content">
           <RouterView v-slot="{ Component }">
             <!--
               只缓存搜索页：用户从搜索跳到歌手主页、再点返回时，搜索词、结果、

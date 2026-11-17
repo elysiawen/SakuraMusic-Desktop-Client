@@ -1,5 +1,6 @@
 import { createPinia } from 'pinia';
 import { createApp } from 'vue';
+import { APP_NAME } from '@shared/constants';
 import App from './App.vue';
 import LyricWindow from './lyric/LyricWindow.vue';
 import NowPlayingWindow from './nowPlaying/NowPlayingWindow.vue';
@@ -11,12 +12,21 @@ import './styles/index.css';
 // 页面 origin 固定为 sakura://app，localStorage 由浏览器原生持久化，
 // 不需要启动注入，也不需要在主进程里做状态镜像。
 
+// 三个窗口共用同一入口，标题按 ?window= 区分——任务栏与窗口列表里一眼能认出来。
+const windowKind = new URLSearchParams(window.location.search).get('window');
+document.title =
+  windowKind === 'nowplaying'
+    ? `${APP_NAME} - NowPlaying`
+    : windowKind === 'lyric'
+      ? `${APP_NAME} - Lyric`
+      : APP_NAME;
+
 // 桌面歌词窗口用同一个入口：`?window=lyric` 时只挂歌词视图，不加载整个应用。
-if (new URLSearchParams(window.location.search).get('window') === 'lyric') {
+if (windowKind === 'lyric') {
   // 透明置顶的歌词窗口不需要启动加载层。
   hideBootSplash();
   createApp(LyricWindow).mount('#app');
-} else if (new URLSearchParams(window.location.search).get('window') === 'nowplaying') {
+} else if (windowKind === 'nowplaying') {
   // 弹出式播放窗口：只挂播放页样式，但壳层组件（RouterLink/样式菜单）用到
   // 路由与 store，所以 pinia / router 照常装上。
   hideBootSplash();

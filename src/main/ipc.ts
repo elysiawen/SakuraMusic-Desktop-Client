@@ -163,8 +163,9 @@ export function registerIpc(context: IpcContext): void {
     // 命令回主窗口执行：弹出窗口只出嘴不出手。
     const main = context.getMainWindow();
     if (main && !main.isDestroyed()) {
-      // 「缩回播放器」要把主窗口叫回来：页面缩回去了，用户得看得见。
-      if (command.type === 'popIn') {
+      // 「缩回播放器」和「点歌手/专辑跳转」都要把主窗口叫回来：
+      // 页面要么缩回去了、要么切到了别的路由，用户得看得见。
+      if (command.type === 'popIn' || command.type === 'navigate') {
         if (main.isMinimized()) main.restore();
         main.show();
         main.focus();

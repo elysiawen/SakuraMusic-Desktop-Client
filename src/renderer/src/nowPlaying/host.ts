@@ -158,7 +158,8 @@ export function initNowPlayingHost(): void {
         ui.queueOpen = false;
         break;
       case 'navigate':
-        void router.push(command.path);
+        // 弹出窗口的 afterEach 与顶部徽标可能各发一次，同路径别重复导航。
+        if (router.currentRoute.value.fullPath !== command.path) void router.push(command.path);
         break;
     }
     push();

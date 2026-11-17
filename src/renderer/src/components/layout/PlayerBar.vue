@@ -173,7 +173,7 @@ function openDevices(): void {
             <AppIcon name="next" :size="21" filled />
           </button>
 
-          <!-- 音量：与左侧模式按钮对称，滑杆悬停时从上方浮出 -->
+          <!-- 音量：从按钮右侧原地向右展开，不占按键行宽度，左边按钮不挪位 -->
           <div class="volume">
             <button
               type="button"
@@ -533,7 +533,7 @@ function openDevices(): void {
   transform: none;
 }
 
-/* ---------------- 音量：悬停浮出 ---------------- */
+/* ---------------- 音量：按钮右侧原地向右展开 ---------------- */
 
 .volume {
   position: relative;
@@ -541,10 +541,28 @@ function openDevices(): void {
   align-items: center;
 }
 
+/*
+ * 按钮与向右展开的浮层之间有 6px 空隙。把 hover 区域向右延长盖住它，
+ * 鼠标从按钮移向滑杆时就不会中途离开 .volume 而让浮层收起。
+ */
+.volume::after {
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  left: 100%;
+  width: 10px;
+  content: '';
+}
+
+/*
+ * 绝对定位，不占 .transport 的 flex 宽度——展开时左边那排按钮一动不动。
+ * clip-path 从右侧裁到左侧，展开动画就是从左边缘往右揭开（雾窗那个方向），
+ * 内容用 transform 缩放会变形，裁切不会。
+ */
 .volume-pop {
   position: absolute;
-  bottom: calc(100% + 14px);
-  left: 50%;
+  top: 50%;
+  left: calc(100% + 6px);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -556,29 +574,32 @@ function openDevices(): void {
   -webkit-backdrop-filter: blur(var(--glass-blur));
   box-shadow: var(--shadow-lg);
   opacity: 0;
-  visibility: hidden;
-  transform: translate(-50%, 8px);
+  clip-path: inset(0 100% 0 0);
+  transform: translateY(-50%);
+  pointer-events: none;
+  /* 收起留 120ms 宽限：桥接万一没接住，鼠标还有时间回到浮层上。 */
   transition:
-    opacity 0.2s ease,
-    transform 0.2s ease,
-    visibility 0.2s;
+    clip-path 0.25s var(--ease) 0.12s,
+    opacity 0.2s ease 0.12s;
 }
 
-/* 透明桥接：图标与面板之间有 14px 间隙，没有它鼠标移过去就收起了。 */
+/* 按钮与浮层之间 6px 的透明桥接，鼠标移过去不会收起。 */
 .volume-pop::after {
   position: absolute;
-  right: 0;
-  bottom: -14px;
-  left: 0;
-  height: 14px;
+  top: 0;
+  bottom: 0;
+  left: -8px;
+  width: 8px;
   content: '';
 }
 
 .volume:hover .volume-pop,
 .volume-pop:hover {
   opacity: 1;
-  visibility: visible;
-  transform: translate(-50%, 0);
+  clip-path: inset(0 0 0 0);
+  pointer-events: auto;
+  /* 展开不等那 120ms，收起才留宽限。 */
+  transition-delay: 0s;
 }
 
 .volume-range {

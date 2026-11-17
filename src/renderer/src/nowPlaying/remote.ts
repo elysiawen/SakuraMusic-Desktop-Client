@@ -1,5 +1,4 @@
 import type { Quality } from '@/api/types';
-import { router } from '@/router';
 import { usePlayerStore } from '@/stores/player';
 import { useRoomStore } from '@/stores/room';
 import { useUiStore } from '@/stores/ui';
@@ -197,12 +196,10 @@ export function initNowPlayingRemote(): void {
   ui.closeLyrics = closeSelf;
   ui.toggleLyrics = closeSelf;
 
-  // 歌手/专辑链接在这里没有详情页可开：路由让给主窗口，自己随点击收起
-  // （三个样式的链接都带 `ui.closeLyrics()`，也就是 closeSelf）。
-  router.afterEach((to, from) => {
-    if (to.fullPath === from.fullPath) return;
-    send({ type: 'navigate', path: to.fullPath });
-  });
+  // 歌手/专辑链接由 NowPlayingWindow 根元素在捕获阶段直接交给主窗口。
+  // 本窗口的 router 有 async beforeEach（首次要 await auth.initialize()），
+  // 走路由再等 afterEach 会晚于关窗；而且这里点链接本来就不该关窗。
+  // 那一段只负责「跳转」，不碰这里的「收起」逻辑。
 
   // 挂载即补齐：晚于主窗口首拍才加载出来也不丢，之后持续吃快照。
   void window.sakura.nowPlaying.getState().then(apply);
